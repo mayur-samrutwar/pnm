@@ -114,6 +114,42 @@ export class InMemoryDB {
       throw error;
     }
   }
+
+  /**
+   * Export database state to a specific file (useful for debugging)
+   */
+  async exportToFile(filePath: string): Promise<void> {
+    try {
+      const data = {
+        usedSlips: Array.from(this.db.usedSlips),
+        deposits: this.db.deposits,
+      };
+      fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    } catch (error) {
+      console.error('Error exporting database:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Reset database (useful for testing)
+   */
+  reset(): void {
+    this.db = {
+      usedSlips: new Set<string>(),
+      deposits: [],
+    };
+  }
+
+  /**
+   * Get database state as object (for inspection)
+   */
+  getState(): { usedSlips: string[]; deposits: DepositRecord[] } {
+    return {
+      usedSlips: Array.from(this.db.usedSlips),
+      deposits: [...this.db.deposits],
+    };
+  }
 }
 
 // Singleton instance

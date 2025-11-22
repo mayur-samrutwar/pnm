@@ -151,10 +151,11 @@ export function verifySignatureP256(
     const yHex = normalizedPubKey.substring(66, 130); // 64 hex chars = 32 bytes
 
     // Create key pair from public key
+    // elliptic expects x and y as hex strings when using object format
     const keyPair = ec.keyFromPublic({
-      x: Buffer.from(xHex, 'hex'),
-      y: Buffer.from(yHex, 'hex'),
-    });
+      x: xHex,
+      y: yHex,
+    } as any, 'hex');
 
     // Parse signature: r || s
     const rHex = normalizedSig.substring(0, 64); // 64 hex chars = 32 bytes

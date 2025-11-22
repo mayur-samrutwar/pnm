@@ -3,7 +3,7 @@ import { ethers } from 'ethers';
 import { ec as EC } from 'elliptic';
 
 describe('Validator Service', () => {
-  let testWallet: ethers.Wallet;
+  let testWallet: ReturnType<typeof ethers.Wallet.createRandom>;
   let testVoucher: Voucher;
 
   beforeAll(() => {
@@ -15,7 +15,7 @@ describe('Validator Service', () => {
     // Create a valid test voucher
     testVoucher = {
       payerAddress: testWallet.address,
-      payeeAddress: '0x8ba1f109551bD432803012645Hac136c22C5e2',
+      payeeAddress: ethers.getAddress('0xAf8822Da0EF804036353d942b2dADd5a763E179D'),
       amount: 1000000000000000000,
       chainId: 1,
       cumulative: 5000000000000000000,
@@ -23,7 +23,7 @@ describe('Validator Service', () => {
       expiry: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
       slipId: '550e8400-e29b-41d4-a716-446655440000',
       contractAddress: '0x1234567890123456789012345678901234567890',
-      signature: '',
+      signature: '0x' + '0'.repeat(130), // Placeholder signature for schema validation
     };
   });
 

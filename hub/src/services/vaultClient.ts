@@ -11,7 +11,7 @@ export class VaultClient {
     rpcUrl: string,
     privateKey: string,
     vaultContractAddress: string,
-    contractABI: any[]
+    contractABI: readonly any[] | any[]
   ) {
     this.provider = new ethers.JsonRpcProvider(rpcUrl);
     this.wallet = new ethers.Wallet(privateKey, this.provider);

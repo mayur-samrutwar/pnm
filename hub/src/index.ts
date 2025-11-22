@@ -31,8 +31,14 @@ async function startServer() {
   });
 }
 
-startServer().catch((error) => {
-  console.error('Failed to start server:', error);
-  process.exit(1);
-});
+// Export app for testing
+export { app };
+
+// Only start server if this file is run directly (not imported)
+if (require.main === module) {
+  startServer().catch((error) => {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  });
+}
 
