@@ -197,24 +197,12 @@ class AppViewModel(
     }
 
     suspend fun getOfflineLimit(): Long {
-        // Get vault balance as the limit (convert from USDC string to Long)
-        val vaultBalanceStr = _vaultBalance.value
-        android.util.Log.d("AppViewModel", "getOfflineLimit: vaultBalanceStr=$vaultBalanceStr")
-        if (vaultBalanceStr != null && vaultBalanceStr.isNotEmpty()) {
-            try {
-                // Convert "1000.0" to 1000000000 (micro USDC units, since USDC has 6 decimals)
-                val balanceDouble = vaultBalanceStr.toDouble()
-                val limit = (balanceDouble * 1_000_000).toLong()
-                android.util.Log.d("AppViewModel", "getOfflineLimit: parsed limit=$limit from balance=$balanceDouble")
-                return limit
-            } catch (e: Exception) {
-                android.util.Log.e("AppViewModel", "Error parsing vault balance: $vaultBalanceStr", e)
-            }
-        }
-        // Fallback to counter manager limit if vault balance not available
-        val fallbackLimit = counterManager.getLimit()
-        android.util.Log.d("AppViewModel", "getOfflineLimit: using fallback limit=$fallbackLimit")
-        return fallbackLimit
+        // Always return the limit stored in the counter manager
+        // This is the limit that was set when the counter was initialized/updated
+        // The vault balance is only used to UPDATE the limit, not to GET it
+        val limit = counterManager.getLimit()
+        android.util.Log.d("AppViewModel", "getOfflineLimit: returning counterManager limit=$limit (${limit / 1_000_000.0} USDC)")
+        return limit
     }
 
     suspend fun getRemainingBalance(): Long {
@@ -261,23 +249,71 @@ class AppViewModel(
                             android.util.Log.d("AppViewModel", "Calculated limit: $limitInMicroUSDC from balance: $balanceDouble")
                             // Update limit without resetting cumulative
                             val currentLimit = counterManager.getLimit()
-                            android.util.Log.d("AppViewModel", "Current limit: $currentLimit, New limit: $limitInMicroUSDC")
+                            val currentCumulative = counterManager.getCumulative()
+                            android.util.Log.d("AppViewModel", "Current limit: $currentLimit, New limit: $limitInMicroUSDC, Current cumulative: $currentCumulative")
                             
                             // If counter was never initialized (limit is 0), initialize it first
+                            // BUT: if cumulative > 0, this is suspicious - don't reset it
                             if (currentLimit == 0L) {
-                                android.util.Log.d("AppViewModel", "Counter not initialized, initializing with limit: $limitInMicroUSDC")
-                                counterManager.initCounter(limitInMicroUSDC)
-                                android.util.Log.d("AppViewModel", "Counter initialized with limit: $limitInMicroUSDC")
-                            } else if (currentLimit != limitInMicroUSDC) {
-                                // updateLimit is a suspend function, so we need to await it
-                                counterManager.updateLimit(limitInMicroUSDC)
-                                // Verify the update succeeded
-                                val updatedLimit = counterManager.getLimit()
-                                if (updatedLimit == limitInMicroUSDC) {
-                                    android.util.Log.d("AppViewModel", "✅ Successfully updated offline limit to: $limitInMicroUSDC (from vault balance: ${balanceResponse.balanceFormatted})")
+                                if (currentCumulative > 0L) {
+                                    android.util.Log.e("AppViewModel", "⚠️ Suspicious state: limit=0 but cumulative=$currentCumulative > 0. This should not happen!")
+                                    android.util.Log.e("AppViewModel", "Not initializing counter to prevent data loss. Please investigate.")
                                 } else {
-                                    android.util.Log.e("AppViewModel", "❌ Failed to update limit! Expected: $limitInMicroUSDC, Got: $updatedLimit")
-                                    android.util.Log.e("AppViewModel", "This might be due to signature verification failure. Counter may need to be re-initialized.")
+                                    android.util.Log.d("AppViewModel", "Counter not initialized, initializing with limit: $limitInMicroUSDC")
+                                    counterManager.initCounter(limitInMicroUSDC)
+                                    android.util.Log.d("AppViewModel", "Counter initialized with limit: $limitInMicroUSDC")
+                                }
+                            } else if (currentLimit != limitInMicroUSDC) {
+                                // CRITICAL: Only update limit if:
+                                // 1. It's a new deposit (vault balance increased), OR
+                                // 2. Cumulative is 0 (no spending yet), OR
+                                // 3. Merchant redeemed (vault balance decreased) AND new limit >= cumulative
+                                // Never update if cumulative > 0 and vault balance is the same (merchant hasn't redeemed)
+                                // This prevents resetting the limit after spending
+                                val isNewDeposit = limitInMicroUSDC > currentLimit
+                                val isMerchantRedeemed = limitInMicroUSDC < currentLimit
+                                val hasNoSpending = currentCumulative == 0L
+                                
+                                if (isNewDeposit) {
+                                    android.util.Log.d("AppViewModel", "New deposit detected: vault balance increased from $currentLimit to $limitInMicroUSDC")
+                                    // updateLimit is a suspend function, so we need to await it
+                                    counterManager.updateLimit(limitInMicroUSDC)
+                                    // Verify the update succeeded
+                                    val updatedLimit = counterManager.getLimit()
+                                    if (updatedLimit == limitInMicroUSDC) {
+                                        android.util.Log.d("AppViewModel", "✅ Successfully updated offline limit to: $limitInMicroUSDC (from vault balance: ${balanceResponse.balanceFormatted})")
+                                    } else {
+                                        android.util.Log.e("AppViewModel", "❌ Failed to update limit! Expected: $limitInMicroUSDC, Got: $updatedLimit")
+                                        android.util.Log.e("AppViewModel", "This might be due to signature verification failure. Counter may need to be re-initialized.")
+                                    }
+                                } else if (isMerchantRedeemed) {
+                                    // Merchant redeemed, vault balance decreased
+                                    if (limitInMicroUSDC >= currentCumulative) {
+                                        android.util.Log.d("AppViewModel", "Merchant redeemed: vault balance decreased from $currentLimit to $limitInMicroUSDC, cumulative=$currentCumulative")
+                                        counterManager.updateLimit(limitInMicroUSDC)
+                                        val updatedLimit = counterManager.getLimit()
+                                        if (updatedLimit == limitInMicroUSDC) {
+                                            android.util.Log.d("AppViewModel", "✅ Successfully updated offline limit to: $limitInMicroUSDC after merchant redemption")
+                                        } else {
+                                            android.util.Log.e("AppViewModel", "❌ Failed to update limit! Expected: $limitInMicroUSDC, Got: $updatedLimit")
+                                        }
+                                    } else {
+                                        android.util.Log.e("AppViewModel", "⚠️ Cannot update limit: new limit ($limitInMicroUSDC) < cumulative ($currentCumulative). This indicates overspending!")
+                                    }
+                                } else if (hasNoSpending) {
+                                    android.util.Log.d("AppViewModel", "No spending yet, updating limit from $currentLimit to $limitInMicroUSDC")
+                                    counterManager.updateLimit(limitInMicroUSDC)
+                                    val updatedLimit = counterManager.getLimit()
+                                    if (updatedLimit == limitInMicroUSDC) {
+                                        android.util.Log.d("AppViewModel", "✅ Successfully updated offline limit to: $limitInMicroUSDC")
+                                    } else {
+                                        android.util.Log.e("AppViewModel", "❌ Failed to update limit! Expected: $limitInMicroUSDC, Got: $updatedLimit")
+                                    }
+                                } else {
+                                    // Cumulative > 0 and vault balance is the same (merchant hasn't redeemed yet)
+                                    // We should NOT update the limit, as this would allow overspending
+                                    android.util.Log.w("AppViewModel", "⚠️ Skipping limit update: cumulative=$currentCumulative > 0 and vault balance unchanged (limit=$currentLimit)")
+                                    android.util.Log.w("AppViewModel", "This prevents overspending. Limit will be updated after merchant redeems (vault decreases) or after new deposit (vault increases).")
                                 }
                             } else {
                                 android.util.Log.d("AppViewModel", "Limit unchanged, no update needed")
