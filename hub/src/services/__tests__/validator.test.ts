@@ -1,5 +1,6 @@
-import { verifySchema, verifySignature, verifyExpiry, Voucher } from '../validator';
+import { verifySchema, verifySignature, verifyExpiry, verifySignatureP256, Voucher } from '../validator';
 import { ethers } from 'ethers';
+import { ec as EC } from 'elliptic';
 
 describe('Validator Service', () => {
   let testWallet: ethers.Wallet;
@@ -142,6 +143,101 @@ describe('Validator Service', () => {
     it('should reject expired voucher', () => {
       testVoucher.expiry = Math.floor(Date.now() / 1000) - 3600; // 1 hour ago
       expect(verifyExpiry(testVoucher)).toBe(false);
+    });
+  });
+
+  describe('verifySignatureP256', () => {
+    it('should verify a valid P-256 signature', () => {
+      // Create a P-256 key pair (same as Android would generate)
+      const ec = new EC('p256');
+      const keyPair = ec.genKeyPair();
+
+      // Export public key in uncompressed format: 0x04 || x || y
+      const pubPoint = keyPair.getPublic();
+      const x = pubPoint.getX().toArray('be', 32); // 32 bytes, big-endian
+      const y = pubPoint.getY().toArray('be', 32); // 32 bytes, big-endian
+      const publicKeyHex = '04' + Buffer.from(x).toString('hex') + Buffer.from(y).toString('hex');
+      // Should be 130 hex chars: 2 (04) + 64 (x) + 64 (y)
+
+      // Create a voucher JSON string (what Android would sign)
+      const voucherJson = JSON.stringify({
+        amount: '100',
+        userAddress: '0x1234567890123456789012345678901234567890',
+        timestamp: Date.now(),
+      });
+
+      // Sign the voucher (same as Android Signer does)
+      const messageHash = require('crypto').createHash('sha256').update(Buffer.from(voucherJson, 'utf8')).digest();
+      const signature = keyPair.sign(messageHash);
+      
+      // Export signature in raw r||s format (same as Android)
+      const r = signature.r.toArray('be', 32); // 32 bytes
+      const s = signature.s.toArray('be', 32); // 32 bytes
+      const signatureHex = Buffer.from(r).toString('hex') + Buffer.from(s).toString('hex');
+      // Should be 128 hex chars: 64 (r) + 64 (s)
+
+      // Verify the signature
+      const isValid = verifySignatureP256(voucherJson, publicKeyHex, signatureHex);
+      expect(isValid).toBe(true);
+    });
+
+    it('should reject invalid P-256 signature', () => {
+      const ec = new EC('p256');
+      const keyPair = ec.genKeyPair();
+
+      const pubPoint = keyPair.getPublic();
+      const x = pubPoint.getX().toArray('be', 32);
+      const y = pubPoint.getY().toArray('be', 32);
+      const publicKeyHex = '04' + Buffer.from(x).toString('hex') + Buffer.from(y).toString('hex');
+
+      const voucherJson = JSON.stringify({ amount: '100' });
+      const invalidSignature = '1'.repeat(128); // Invalid signature
+
+      const isValid = verifySignatureP256(voucherJson, publicKeyHex, invalidSignature);
+      expect(isValid).toBe(false);
+    });
+
+    it('should reject signature for different message', () => {
+      const ec = new EC('p256');
+      const keyPair = ec.genKeyPair();
+
+      const pubPoint = keyPair.getPublic();
+      const x = pubPoint.getX().toArray('be', 32);
+      const y = pubPoint.getY().toArray('be', 32);
+      const publicKeyHex = '04' + Buffer.from(x).toString('hex') + Buffer.from(y).toString('hex');
+
+      // Sign message A
+      const messageA = JSON.stringify({ amount: '100' });
+      const messageAHash = require('crypto').createHash('sha256').update(Buffer.from(messageA, 'utf8')).digest();
+      const signature = keyPair.sign(messageAHash);
+      const r = signature.r.toArray('be', 32);
+      const s = signature.s.toArray('be', 32);
+      const signatureHex = Buffer.from(r).toString('hex') + Buffer.from(s).toString('hex');
+
+      // Try to verify with message B
+      const messageB = JSON.stringify({ amount: '200' });
+      const isValid = verifySignatureP256(messageB, publicKeyHex, signatureHex);
+      expect(isValid).toBe(false);
+    });
+
+    it('should handle public key with 0x prefix', () => {
+      const ec = new EC('p256');
+      const keyPair = ec.genKeyPair();
+
+      const pubPoint = keyPair.getPublic();
+      const x = pubPoint.getX().toArray('be', 32);
+      const y = pubPoint.getY().toArray('be', 32);
+      const publicKeyHex = '0x04' + Buffer.from(x).toString('hex') + Buffer.from(y).toString('hex');
+
+      const voucherJson = JSON.stringify({ amount: '100' });
+      const messageHash = require('crypto').createHash('sha256').update(Buffer.from(voucherJson, 'utf8')).digest();
+      const signature = keyPair.sign(messageHash);
+      const r = signature.r.toArray('be', 32);
+      const s = signature.s.toArray('be', 32);
+      const signatureHex = Buffer.from(r).toString('hex') + Buffer.from(s).toString('hex');
+
+      const isValid = verifySignatureP256(voucherJson, publicKeyHex, signatureHex);
+      expect(isValid).toBe(true);
     });
   });
 

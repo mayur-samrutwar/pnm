@@ -12,6 +12,8 @@ data class Slip(
     val amount: String,
     @SerializedName("userAddress")
     val userAddress: String,
+    @SerializedName("publicKey")
+    val publicKey: String? = null,
     @SerializedName("signature")
     val signature: String,
     @SerializedName("timestamp")

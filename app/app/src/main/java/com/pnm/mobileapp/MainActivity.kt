@@ -8,7 +8,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -67,10 +67,11 @@ fun MainScreen(
     database: AppDatabase,
     hubApiService: HubApiService
 ) {
+    val context = LocalContext.current
     var selectedRole by remember { mutableStateOf(UserRole.USER) }
     var showSlipDialog by remember { mutableStateOf<Slip?>(null) }
     val navController = rememberNavController()
-    val appViewModel: AppViewModel = viewModel()
+    val appViewModel: AppViewModel = remember { AppViewModel(context) }
     val merchantViewModel = remember {
         MerchantViewModel(database.pendingSlipDao(), hubApiService)
     }

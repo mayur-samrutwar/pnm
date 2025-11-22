@@ -1,6 +1,10 @@
 import Ajv from 'ajv';
 import { ethers } from 'ethers';
+import { ec as EC } from 'elliptic';
 import voucherSchema from '../../../json/voucher-schema.json';
+
+// Initialize P-256 curve
+const ec = new EC('p256');
 
 const ajv = new Ajv({ allErrors: true });
 const validateSchema = ajv.compile(voucherSchema);
@@ -103,5 +107,74 @@ export function verifyContractAddress(
   expectedAddress: string
 ): boolean {
   return voucher.contractAddress.toLowerCase() === expectedAddress.toLowerCase();
+}
+
+/**
+ * Verify ECDSA P-256 signature for vouchers/slips
+ * 
+ * @param voucherJson - The JSON string that was signed (original message)
+ * @param publicKeyHex - Public key in uncompressed format: "04" + x (64 hex) + y (64 hex) = 130 hex chars
+ * @param signatureHex - Signature in raw r||s format: r (64 hex) + s (64 hex) = 128 hex chars
+ * @returns true if signature is valid
+ * 
+ * Public Key Format:
+ * - Android generates: 0x04 || x (32 bytes) || y (32 bytes) = 65 bytes = 130 hex chars
+ * - This function expects the same format (with or without 0x prefix)
+ * 
+ * Signature Format:
+ * - Android generates: r (32 bytes) || s (32 bytes) = 64 bytes = 128 hex chars
+ * - This is the raw format, not DER-encoded
+ */
+export function verifySignatureP256(
+  voucherJson: string,
+  publicKeyHex: string,
+  signatureHex: string
+): boolean {
+  try {
+    // Normalize hex strings (remove 0x prefix if present)
+    const normalizedPubKey = publicKeyHex.replace(/^0x/, '');
+    const normalizedSig = signatureHex.replace(/^0x/, '');
+
+    // Validate lengths
+    if (normalizedPubKey.length !== 130) {
+      throw new Error(`Invalid public key length: expected 130 hex chars, got ${normalizedPubKey.length}`);
+    }
+    if (normalizedSig.length !== 128) {
+      throw new Error(`Invalid signature length: expected 128 hex chars, got ${normalizedSig.length}`);
+    }
+
+    // Parse public key: 0x04 || x || y
+    if (normalizedPubKey.substring(0, 2) !== '04') {
+      throw new Error('Public key must start with 04 (uncompressed format)');
+    }
+    const xHex = normalizedPubKey.substring(2, 66); // 64 hex chars = 32 bytes
+    const yHex = normalizedPubKey.substring(66, 130); // 64 hex chars = 32 bytes
+
+    // Create key pair from public key
+    const keyPair = ec.keyFromPublic({
+      x: Buffer.from(xHex, 'hex'),
+      y: Buffer.from(yHex, 'hex'),
+    });
+
+    // Parse signature: r || s
+    const rHex = normalizedSig.substring(0, 64); // 64 hex chars = 32 bytes
+    const sHex = normalizedSig.substring(64, 128); // 64 hex chars = 32 bytes
+
+    // Create signature object
+    const signature = {
+      r: Buffer.from(rHex, 'hex'),
+      s: Buffer.from(sHex, 'hex'),
+    };
+
+    // Hash the message (same as Android does: SHA-256)
+    const messageHash = Buffer.from(voucherJson, 'utf8');
+    const hash = require('crypto').createHash('sha256').update(messageHash).digest();
+
+    // Verify signature
+    return keyPair.verify(hash, signature);
+  } catch (error) {
+    console.error('P-256 signature verification error:', error);
+    return false;
+  }
 }
 

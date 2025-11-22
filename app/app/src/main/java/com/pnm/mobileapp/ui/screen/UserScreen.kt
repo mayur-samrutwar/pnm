@@ -16,7 +16,9 @@ import androidx.compose.ui.unit.dp
 import com.pnm.mobileapp.data.model.Slip
 import com.pnm.mobileapp.ui.viewmodel.AppViewModel
 import com.pnm.mobileapp.util.Constants
-import com.pnm.mobileapp.util.WalletUtils
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -129,12 +131,18 @@ fun UserScreen(
                 Button(
                     onClick = {
                         wallet?.let { w ->
-                            val slip = Slip(
-                                amount = amount,
-                                userAddress = w.address,
-                                signature = WalletUtils.signData(amount.toByteArray(), w.keyPair.private)
-                            )
-                            onShowSlipDialog(slip)
+                            CoroutineScope(Dispatchers.Main).launch {
+                                val voucherJson = """{"amount":"$amount","userAddress":"${w.address}","timestamp":${System.currentTimeMillis()}}"""
+                                val signature = viewModel.signVoucher(voucherJson)
+                                val publicKey = viewModel.getPublicKeyHex()
+                                val slip = Slip(
+                                    amount = amount,
+                                    userAddress = w.address,
+                                    publicKey = publicKey,
+                                    signature = signature
+                                )
+                                onShowSlipDialog(slip)
+                            }
                         }
                     },
                     enabled = wallet != null && amount.isNotBlank()
