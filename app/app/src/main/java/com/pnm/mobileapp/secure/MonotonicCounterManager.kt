@@ -223,6 +223,60 @@ class MonotonicCounterManager(
     }
 
     /**
+     * Update the limit while preserving cumulative and counter
+     * This is used when user deposits more money to the vault
+     * The new state is signed with hardware key to prevent tampering
+     */
+    suspend fun updateLimit(newLimit: Long): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Get current state
+            val currentCumulative = getCumulative()
+            val currentCounter = getCounter()
+            val currentLimit = getLimit()
+            
+            // If limit hasn't changed, no need to update
+            if (currentLimit == newLimit) {
+                Log.d(TAG, "Limit unchanged: $newLimit")
+                return@withContext true
+            }
+            
+            // Verify current state signature before updating
+            val currentState = CounterState(
+                cumulative = currentCumulative,
+                counter = currentCounter,
+                limit = currentLimit
+            )
+            val currentSignature = encryptedPrefs.getString(KEY_STATE_SIGNATURE, null)
+            if (currentSignature == null || !verifyState(currentState, currentSignature)) {
+                Log.e(TAG, "Cannot update limit: current state signature verification failed - possible tampering")
+                return@withContext false
+            }
+            
+            // Create new state with updated limit (preserving cumulative and counter)
+            val newState = CounterState(
+                cumulative = currentCumulative,
+                counter = currentCounter,
+                limit = newLimit
+            )
+            
+            // Sign new state with hardware key
+            val newSignature = signState(newState) ?: return@withContext false
+            
+            // Atomically update state
+            encryptedPrefs.edit()
+                .putLong(KEY_OFFLINE_LIMIT, newLimit)
+                .putString(KEY_STATE_SIGNATURE, newSignature)
+                .apply()
+            
+            Log.d(TAG, "Limit updated: $currentLimit -> $newLimit (cumulative=$currentCumulative, counter=$currentCounter preserved)")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to update limit: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
      * Reset counter with new limit (for refill)
      */
     suspend fun reset(

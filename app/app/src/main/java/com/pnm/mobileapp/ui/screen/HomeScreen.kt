@@ -13,6 +13,8 @@ import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Wallet
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -48,20 +50,26 @@ fun HomeScreen(
     var amountInput by remember { mutableStateOf("") }
     val context = LocalContext.current
     
-    var offlineLimit by remember { mutableStateOf(0L) }
-    var remainingBalance by remember { mutableStateOf(0L) }
+    var remainingBalance by remember { mutableStateOf(0.0) }
+    val vaultBalance by viewModel.vaultBalance.collectAsState()
+    val isLoadingVaultBalance by viewModel.isLoadingVaultBalance.collectAsState()
 
     // Refresh balances when screen is displayed
     LaunchedEffect(Unit) {
-        offlineLimit = viewModel.getOfflineLimit()
-        remainingBalance = viewModel.getRemainingBalance()
         viewModel.fetchUSDCBalance()
+        viewModel.fetchVaultBalance()
+    }
+    
+    // Update remaining balance when vault balance or cumulative changes
+    LaunchedEffect(vaultBalance) {
+        remainingBalance = viewModel.getRemainingBalance().toDouble() / 1_000_000.0 // Convert to USDC
     }
     
     // Refresh USDC balance when wallet changes
     LaunchedEffect(wallet?.ethAddress) {
         if (wallet?.ethAddress != null && !wallet!!.ethAddress.startsWith("0x0000")) {
             viewModel.fetchUSDCBalance()
+            viewModel.fetchVaultBalance()
         }
     }
 
@@ -168,20 +176,19 @@ fun HomeScreen(
                                 )
                             )
                             Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "$remainingBalance",
-                                style = MaterialTheme.typography.headlineMedium.copy(
-                                    fontWeight = FontWeight.Bold,
+                            if (isLoadingVaultBalance) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
                                     color = Color.White,
-                                    fontSize = 24.sp
+                                    strokeWidth = 2.dp
                                 )
-                            )
-                            if (offlineLimit > 0) {
+                            } else {
                                 Text(
-                                    text = "of $offlineLimit",
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        color = Color.White.copy(alpha = 0.7f),
-                                        fontSize = 11.sp
+                                    text = String.format("%.2f", remainingBalance),
+                                    style = MaterialTheme.typography.headlineMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        fontSize = 24.sp
                                     )
                                 )
                             }
@@ -327,8 +334,6 @@ fun HomeScreen(
                                         val currentCumulative = viewModel.getCumulative()
                                         val currentCounter = viewModel.counter.value
                                         
-                                        // Refresh balance after creating slip
-                                        remainingBalance = viewModel.getRemainingBalance()
                                         val slipId = UUID.randomUUID().toString()
                                         val timestamp = System.currentTimeMillis()
                                         val publicKey = viewModel.getPublicKeyHex()
@@ -367,7 +372,7 @@ fun HomeScreen(
                                         amountInput = ""
                                         
                                         // Refresh balance after creating slip
-                                        remainingBalance = viewModel.getRemainingBalance()
+                                        remainingBalance = viewModel.getRemainingBalance().toDouble() / 1_000_000.0
                                         
                                         onShowSlipDialog(slip, signedVoucherJson)
                                     } catch (e: IllegalStateException) {
@@ -391,24 +396,106 @@ fun HomeScreen(
             )
         }
         
-        // Deposit Dialog (placeholder - can be implemented later)
+        // Deposit Dialog
         if (showDepositDialog) {
+            var depositAmountInput by remember { mutableStateOf("") }
+            var isDepositing by remember { mutableStateOf(false) }
+            var depositError by remember { mutableStateOf<String?>(null) }
+            
             AlertDialog(
-                onDismissRequest = { showDepositDialog = false },
+                onDismissRequest = { 
+                    showDepositDialog = false
+                    depositAmountInput = ""
+                    depositError = null
+                },
                 title = {
                     Text(
-                        text = "Deposit",
+                        text = "Deposit to Vault",
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.Bold
                         )
                     )
                 },
                 text = {
-                    Text("Deposit functionality coming soon")
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        if (depositError != null) {
+                            Text(
+                                text = depositError!!,
+                                color = Color(0xFFEF4444),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        OutlinedTextField(
+                            value = depositAmountInput,
+                            onValueChange = { depositAmountInput = it },
+                            label = { Text("Amount (USDC)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            enabled = !isDepositing
+                        )
+                        if (usdcBalance != null) {
+                            Text(
+                                text = "Available: $usdcBalance USDC",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = Color(0xFF64748B)
+                                )
+                            )
+                        }
+                    }
                 },
                 confirmButton = {
-                    TextButton(onClick = { showDepositDialog = false }) {
-                        Text("OK")
+                    Button(
+                        onClick = {
+                            val amount = depositAmountInput.toDoubleOrNull()
+                            if (amount == null || amount <= 0) {
+                                depositError = "Please enter a valid amount"
+                                return@Button
+                            }
+                            
+                            isDepositing = true
+                            depositError = null
+                            
+                            CoroutineScope(Dispatchers.Main).launch {
+                                val result = viewModel.depositToVault(amount)
+                                if (result.isSuccess) {
+                                    showDepositDialog = false
+                                    depositAmountInput = ""
+                                    Toast.makeText(context, result.getOrNull() ?: "Deposit successful", Toast.LENGTH_LONG).show()
+                                    // Refresh balance
+                                    viewModel.fetchUSDCBalance()
+                                } else {
+                                    depositError = result.exceptionOrNull()?.message ?: "Deposit failed"
+                                    isDepositing = false
+                                }
+                            }
+                        },
+                        enabled = !isDepositing && depositAmountInput.isNotBlank() && depositAmountInput.toDoubleOrNull() != null
+                    ) {
+                        if (isDepositing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Depositing...")
+                        } else {
+                            Text("Deposit")
+                        }
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { 
+                            showDepositDialog = false
+                            depositAmountInput = ""
+                            depositError = null
+                        },
+                        enabled = !isDepositing
+                    ) {
+                        Text("Cancel")
                     }
                 }
             )

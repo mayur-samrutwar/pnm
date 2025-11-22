@@ -9,14 +9,18 @@ import android.util.Base64
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.pnm.mobileapp.crypto.CounterManager
+import com.pnm.mobileapp.crypto.EthereumDepositManager
 import com.pnm.mobileapp.crypto.EthereumWalletGenerator
 import com.pnm.mobileapp.crypto.Signer
 import com.pnm.mobileapp.data.api.HubApiService
 import com.pnm.mobileapp.data.model.Wallet
 import com.pnm.mobileapp.secure.BiometricAuthHelper
+import com.pnm.mobileapp.util.Constants
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import java.math.BigInteger
 import java.security.KeyPair
 
 class AppViewModel(
@@ -32,6 +36,7 @@ class AppViewModel(
     private val signer = Signer(context)
     private val counterManager = CounterManager(context)
     private val ethereumWalletGenerator = EthereumWalletGenerator()
+    private val ethereumDepositManager = EthereumDepositManager()
     private val _wallet = MutableStateFlow<Wallet?>(null)
     val wallet: StateFlow<Wallet?> = _wallet
     private var keyPair: KeyPair? = null
@@ -68,12 +73,21 @@ class AppViewModel(
     private val _isLoadingBalance = MutableStateFlow(false)
     val isLoadingBalance: StateFlow<Boolean> = _isLoadingBalance
 
+    private val _vaultBalance = MutableStateFlow<String?>(null)
+    val vaultBalance: StateFlow<String?> = _vaultBalance
+
+    private val _isLoadingVaultBalance = MutableStateFlow(false)
+    val isLoadingVaultBalance: StateFlow<Boolean> = _isLoadingVaultBalance
+
     init {
         viewModelScope.launch {
             _cumulative.value = counterManager.getCumulative()
             _counter.value = counterManager.getCounter()
             // Try to load existing wallet from Keystore
             loadExistingWallet()
+            // Fetch vault balance after wallet is loaded
+            delay(500) // Small delay to ensure wallet is loaded
+            fetchVaultBalance()
         }
     }
 
@@ -179,13 +193,81 @@ class AppViewModel(
     }
 
     suspend fun getOfflineLimit(): Long {
+        // Get vault balance as the limit (convert from USDC string to Long)
+        val vaultBalanceStr = _vaultBalance.value
+        if (vaultBalanceStr != null) {
+            try {
+                // Convert "1000.0" to 1000000000 (micro USDC units, since USDC has 6 decimals)
+                val balanceDouble = vaultBalanceStr.toDouble()
+                return (balanceDouble * 1_000_000).toLong()
+            } catch (e: Exception) {
+                android.util.Log.e("AppViewModel", "Error parsing vault balance: $vaultBalanceStr", e)
+            }
+        }
+        // Fallback to counter manager limit if vault balance not available
         return counterManager.getLimit()
     }
 
     suspend fun getRemainingBalance(): Long {
-        val limit = counterManager.getLimit()
+        val limit = getOfflineLimit()
         val cumulative = counterManager.getCumulative()
         return maxOf(0L, limit - cumulative)
+    }
+
+    /**
+     * Fetch vault deposit balance from hub server
+     * This is the actual balance available for offline spending
+     */
+    fun fetchVaultBalance() {
+        viewModelScope.launch {
+            val wallet = _wallet.value
+            val ethAddress = wallet?.ethAddress
+            
+            if (ethAddress == null || ethAddress.startsWith("0x0000") || hubApiService == null) {
+                _vaultBalance.value = null
+                return@launch
+            }
+
+            _isLoadingVaultBalance.value = true
+            try {
+                android.util.Log.d("AppViewModel", "Fetching vault balance for address: $ethAddress")
+                val response = hubApiService.getVaultBalance(ethAddress)
+                android.util.Log.d("AppViewModel", "Vault balance API response code: ${response.code()}")
+                if (response.isSuccessful && response.body() != null) {
+                    val balanceResponse = response.body()!!
+                    android.util.Log.d("AppViewModel", "Vault balance response: status=${balanceResponse.status}, balance=${balanceResponse.balanceFormatted}")
+                    if (balanceResponse.status == "success") {
+                        _vaultBalance.value = balanceResponse.balanceFormatted
+                        // Update counter manager limit with vault balance
+                        val balanceDouble = balanceResponse.balanceFormatted.toDoubleOrNull()
+                        if (balanceDouble != null) {
+                            val limitInMicroUSDC = (balanceDouble * 1_000_000).toLong()
+                            // Update limit without resetting cumulative
+                            val currentLimit = counterManager.getLimit()
+                            if (currentLimit != limitInMicroUSDC) {
+                                counterManager.updateLimit(limitInMicroUSDC)
+                                android.util.Log.d("AppViewModel", "Updated offline limit to: $limitInMicroUSDC (from vault balance: ${balanceResponse.balanceFormatted})")
+                            }
+                            // Refresh cumulative and counter display
+                            _cumulative.value = counterManager.getCumulative()
+                            _counter.value = counterManager.getCounter()
+                        }
+                    } else {
+                        android.util.Log.e("AppViewModel", "Vault balance API returned error: ${balanceResponse.status}")
+                        _vaultBalance.value = null
+                    }
+                } else {
+                    val errorBody = response.errorBody()?.string()
+                    android.util.Log.e("AppViewModel", "Failed to fetch vault balance: ${response.code()}, $errorBody")
+                    _vaultBalance.value = null
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("AppViewModel", "Error fetching vault balance", e)
+                _vaultBalance.value = null
+            } finally {
+                _isLoadingVaultBalance.value = false
+            }
+        }
     }
 
     suspend fun canSign(amount: Long): Boolean {
@@ -263,6 +345,97 @@ class AppViewModel(
             } finally {
                 _isLoadingBalance.value = false
             }
+        }
+    }
+
+    /**
+     * Deposit USDC to vault
+     * @param amount Amount in USDC (will be converted to token units)
+     */
+    suspend fun depositToVault(amount: Double): Result<String> {
+        val wallet = _wallet.value
+        val ethPrivateKey = ethPrivateKey
+        val ethAddress = wallet?.ethAddress
+
+        if (wallet == null || ethPrivateKey == null || ethAddress == null || ethAddress.startsWith("0x0000")) {
+            return Result.failure(Exception("Ethereum wallet not available"))
+        }
+
+        if (hubApiService == null) {
+            return Result.failure(Exception("Hub API service not available"))
+        }
+
+        return try {
+            // Verify that the private key matches the address
+            val derivedAddress = ethereumDepositManager.deriveAddressFromPrivateKey(ethPrivateKey)
+            android.util.Log.d("AppViewModel", "Profile address: $ethAddress, Derived from key: $derivedAddress")
+            
+            // Use the address derived from the private key (this is the actual address that will sign)
+            val actualAddress = if (derivedAddress.lowercase() != ethAddress.lowercase()) {
+                android.util.Log.w("AppViewModel", "Address mismatch! Profile shows $ethAddress but key derives $derivedAddress. Using derived address.")
+                // Update the wallet with the correct address
+                _wallet.value = wallet.copy(ethAddress = derivedAddress)
+                derivedAddress
+            } else {
+                ethAddress
+            }
+            
+            // Convert amount to token units (USDC has 6 decimals)
+            val amountInTokenUnits = (amount * 1_000_000).toLong()
+            val amountBigInt = BigInteger.valueOf(amountInTokenUnits)
+
+            // Get nonce using the actual address
+            val nonce = ethereumDepositManager.getNonce(Constants.RPC_URL, actualAddress)
+            android.util.Log.d("AppViewModel", "Using nonce: $nonce for deposit with address: $actualAddress")
+
+            // Create approve transaction
+            val approveTx = ethereumDepositManager.createApproveTransaction(
+                privateKey = ethPrivateKey,
+                rpcUrl = Constants.RPC_URL,
+                tokenAddress = Constants.USDC_TOKEN_CONTRACT,
+                spenderAddress = Constants.VAULT_CONTRACT_ADDRESS,
+                amount = amountBigInt,
+                nonce = nonce
+            )
+
+            // Create deposit transaction (nonce + 1)
+            val depositTx = ethereumDepositManager.createDepositTransaction(
+                privateKey = ethPrivateKey,
+                rpcUrl = Constants.RPC_URL,
+                vaultAddress = Constants.VAULT_CONTRACT_ADDRESS,
+                userAddress = actualAddress, // Use actual address derived from key
+                tokenAddress = Constants.USDC_TOKEN_CONTRACT,
+                amount = amountBigInt,
+                nonce = nonce + 1
+            )
+
+            // Send to hub
+            val depositRequest = com.pnm.mobileapp.data.api.DepositRequest(
+                userAddress = actualAddress, // Use actual address
+                amount = amountBigInt.toString(),
+                signedApproveTx = approveTx,
+                signedDepositTx = depositTx
+            )
+
+            val response = hubApiService.deposit(depositRequest)
+            if (response.isSuccessful && response.body() != null) {
+                val depositResponse = response.body()!!
+                if (depositResponse.status == "success") {
+                    android.util.Log.d("AppViewModel", "Deposit successful: ${depositResponse.depositTxHash}")
+                    // Refresh balances after deposit
+                    fetchUSDCBalance()
+                    fetchVaultBalance() // Update offline limit
+                    Result.success("Deposit successful: ${depositResponse.depositTxHash}")
+                } else {
+                    Result.failure(Exception(depositResponse.message))
+                }
+            } else {
+                val errorBody = response.errorBody()?.string()
+                Result.failure(Exception("Deposit failed: ${response.code()}, $errorBody"))
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("AppViewModel", "Error depositing to vault", e)
+            Result.failure(e)
         }
     }
 }

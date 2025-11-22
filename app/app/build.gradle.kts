@@ -103,6 +103,9 @@ dependencies {
     // BouncyCastle for Keccak-256 (Ethereum address derivation)
     implementation("org.bouncycastle:bcprov-jdk15on:1.70")
     
+    // Web3j for Ethereum transaction signing
+    implementation("org.web3j:core:4.9.8")
+    
     // Testing
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")

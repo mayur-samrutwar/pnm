@@ -96,6 +96,25 @@ export class VaultClient {
       return false;
     }
   }
+
+  /**
+   * Get USDC balance for an Ethereum address
+   * @param address The Ethereum address to check
+   * @param tokenAddress The ERC20 token contract address (USDC)
+   * @returns Balance in token units (will need to divide by 10^decimals for human-readable)
+   */
+  async getTokenBalance(address: string, tokenAddress: string): Promise<bigint> {
+    try {
+      // ERC20 balanceOf function ABI
+      const erc20Abi = ['function balanceOf(address owner) external view returns (uint256)'];
+      const tokenContract = new ethers.Contract(tokenAddress, erc20Abi, this.provider);
+      const balance = await tokenContract.balanceOf(address);
+      return balance;
+    } catch (error) {
+      console.error('Error getting token balance:', error);
+      throw error;
+    }
+  }
 }
 
 // Vault contract ABI (minimal interface for redeemVoucher)

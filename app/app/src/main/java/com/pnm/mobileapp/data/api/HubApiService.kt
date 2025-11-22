@@ -24,6 +24,12 @@ interface HubApiService {
 
     @GET("/api/v1/balance/{address}")
     suspend fun getBalance(@Path("address") address: String): Response<BalanceResponse>
+
+    @GET("/api/v1/vaultBalance/{address}")
+    suspend fun getVaultBalance(@Path("address") address: String): Response<BalanceResponse>
+
+    @POST("/api/v1/deposit")
+    suspend fun deposit(@Body request: DepositRequest): Response<DepositResponse>
 }
 
 /**
@@ -139,5 +145,27 @@ data class BalanceResponse(
     val decimals: Int,
     @SerializedName("tokenAddress")
     val tokenAddress: String? = null
+)
+
+data class DepositRequest(
+    @SerializedName("userAddress")
+    val userAddress: String,
+    @SerializedName("amount")
+    val amount: String,
+    @SerializedName("signedApproveTx")
+    val signedApproveTx: String,
+    @SerializedName("signedDepositTx")
+    val signedDepositTx: String
+)
+
+data class DepositResponse(
+    @SerializedName("status")
+    val status: String,
+    @SerializedName("message")
+    val message: String,
+    @SerializedName("approveTxHash")
+    val approveTxHash: String? = null,
+    @SerializedName("depositTxHash")
+    val depositTxHash: String? = null
 )
 

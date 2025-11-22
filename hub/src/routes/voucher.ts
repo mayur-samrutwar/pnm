@@ -221,6 +221,73 @@ router.post('/depositWebhook', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/v1/vaultBalance/:address
+ * Get vault deposit balance for a user address
+ */
+router.get('/vaultBalance/:address', async (req: Request, res: Response) => {
+  try {
+    const { address } = req.params;
+
+    // Validate address format
+    const addressRegex = /^0x[a-fA-F0-9]{40}$/;
+    if (!addressRegex.test(address)) {
+      return res.status(400).json({
+        status: 'error',
+        reason: 'Invalid address format',
+      });
+    }
+
+    // Get RPC URL and vault address
+    const rpcUrl = process.env.RPC_URL;
+    const vaultAddress = process.env.VAULT_CONTRACT_ADDRESS;
+
+    if (!rpcUrl || !vaultAddress) {
+      return res.status(500).json({
+        status: 'error',
+        reason: 'Server configuration missing: RPC_URL or VAULT_CONTRACT_ADDRESS',
+      });
+    }
+
+    // Get vault deposit balance
+    const { ethers } = require('ethers');
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const vaultAbi = ['function deposits(address) external view returns (uint256)'];
+    const vaultContract = new ethers.Contract(vaultAddress, vaultAbi, provider);
+    
+    const depositBalance = await vaultContract.deposits(address);
+    const depositBalanceStr = depositBalance.toString();
+    
+    // Get token decimals (assuming USDC has 6 decimals)
+    const tokenAddress = process.env.MOCK_ERC20_ADDRESS || process.env.USDC_ADDRESS;
+    let decimals = 6; // Default for USDC
+    if (tokenAddress) {
+      try {
+        const erc20Abi = ['function decimals() external view returns (uint8)'];
+        const tokenContract = new ethers.Contract(tokenAddress, erc20Abi, provider);
+        decimals = Number(await tokenContract.decimals());
+      } catch (e) {
+        console.warn('Could not fetch token decimals, using default 6');
+      }
+    }
+    
+    const depositFormatted = ethers.formatUnits(depositBalance, decimals);
+    
+    return res.status(200).json({
+      status: 'success',
+      balance: depositBalanceStr,
+      balanceFormatted: depositFormatted,
+      decimals: decimals,
+    });
+  } catch (error) {
+    console.error('Error getting vault balance:', error);
+    return res.status(500).json({
+      status: 'error',
+      reason: 'Internal server error',
+    });
+  }
+});
+
+/**
  * GET /api/v1/balance/:address
  * Get USDC balance for an Ethereum address
  */
@@ -308,6 +375,130 @@ router.get('/balance/:address', async (req: Request, res: Response) => {
     return res.status(500).json({
       status: 'error',
       reason: 'Internal server error',
+    });
+  }
+});
+
+/**
+ * POST /api/v1/deposit
+ * Deposit USDC tokens to vault
+ * Expects: { userAddress, amount, signedApproveTx, signedDepositTx }
+ */
+router.post('/deposit', async (req: Request, res: Response) => {
+  try {
+    const { userAddress, amount, signedApproveTx, signedDepositTx } = req.body;
+
+    if (!userAddress || !amount || !signedApproveTx || !signedDepositTx) {
+      return res.status(400).json({
+        status: 'error',
+        reason: 'Missing required fields: userAddress, amount, signedApproveTx, signedDepositTx',
+      });
+    }
+
+    // Validate addresses
+    const addressRegex = /^0x[a-fA-F0-9]{40}$/;
+    if (!addressRegex.test(userAddress)) {
+      return res.status(400).json({
+        status: 'error',
+        reason: 'Invalid user address format',
+      });
+    }
+
+    // Get RPC URL and contract addresses
+    const rpcUrl = process.env.RPC_URL;
+    const vaultAddress = process.env.VAULT_CONTRACT_ADDRESS;
+    const tokenAddress = process.env.MOCK_ERC20_ADDRESS || process.env.USDC_ADDRESS;
+
+    if (!rpcUrl || !vaultAddress || !tokenAddress) {
+      return res.status(500).json({
+        status: 'error',
+        reason: 'Server configuration missing: RPC_URL, VAULT_CONTRACT_ADDRESS, or token address',
+      });
+    }
+
+    const { ethers } = require('ethers');
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
+
+    try {
+      // Send approve transaction
+      const approveTx = await provider.broadcastTransaction(signedApproveTx);
+      await approveTx.wait();
+      console.log('Approve transaction confirmed:', approveTx.hash);
+
+      // Send deposit transaction
+      const depositTx = await provider.broadcastTransaction(signedDepositTx);
+      const receipt = await depositTx.wait();
+      console.log('Deposit transaction confirmed:', depositTx.hash);
+
+      return res.status(200).json({
+        status: 'success',
+        message: 'Deposit successful',
+        approveTxHash: approveTx.hash,
+        depositTxHash: depositTx.hash,
+      });
+    } catch (error: any) {
+      console.error('Error broadcasting transactions:', error);
+      return res.status(500).json({
+        status: 'error',
+        reason: `Transaction failed: ${error.message}`,
+      });
+    }
+  } catch (error) {
+    console.error('Error processing deposit:', error);
+    return res.status(500).json({
+      status: 'error',
+      reason: 'Internal server error',
+    });
+  }
+});
+
+/**
+ * POST /api/v1/rpc
+ * Proxy Ethereum RPC requests to the local Hardhat node
+ * This allows the mobile app to make RPC calls through the hub server
+ */
+router.post('/rpc', async (req: Request, res: Response) => {
+  try {
+    const rpcUrl = process.env.RPC_URL;
+    if (!rpcUrl) {
+      return res.status(500).json({
+        jsonrpc: '2.0',
+        error: { code: -32603, message: 'RPC URL not configured' },
+        id: req.body.id || null
+      });
+    }
+
+    // Forward the JSON-RPC request directly to the local Hardhat node
+    const rpcRequest = req.body;
+    
+    try {
+      // Use Node.js built-in fetch (available in Node 18+)
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rpcRequest)
+      });
+      
+      if (!response.ok) {
+        throw new Error(`RPC request failed: ${response.status} ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      return res.json(data);
+    } catch (error: any) {
+      console.error('RPC proxy error:', error);
+      return res.json({
+        jsonrpc: '2.0',
+        error: { code: -32603, message: error.message || 'Internal error' },
+        id: rpcRequest.id || null
+      });
+    }
+  } catch (error) {
+    console.error('Error in RPC proxy:', error);
+    return res.status(500).json({
+      jsonrpc: '2.0',
+      error: { code: -32603, message: 'Internal server error' },
+      id: req.body.id || null
     });
   }
 });
