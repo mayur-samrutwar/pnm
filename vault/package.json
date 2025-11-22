@@ -1,0 +1,30 @@
+{
+  "name": "contracts",
+  "version": "1.0.0",
+  "description": "Solidity smart contracts with Hardhat",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
+    "deploy:mainnet": "hardhat run scripts/deploy.js --network mainnet",
+    "node": "hardhat node",
+    "verify": "hardhat verify"
+  },
+  "keywords": [
+    "solidity",
+    "hardhat",
+    "ethereum",
+    "smart-contracts"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^3.0.2",
+    "hardhat": "^2.19.2"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1"
+  }
+}
+

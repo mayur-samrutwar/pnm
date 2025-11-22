@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+.gradle/
+build/
+dist/
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Android
+*.apk
+*.aab
+local.properties
+*.iml
+
+# Hardhat
+cache/
+artifacts/
+coverage/
+coverage.json
+
+# TypeScript
+*.tsbuildinfo
+
