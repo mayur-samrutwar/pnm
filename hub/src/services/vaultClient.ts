@@ -80,6 +80,22 @@ export class VaultClient {
   getWalletAddress(): string {
     return this.wallet.address;
   }
+
+  /**
+   * Check if a user is settled for a specific nonce
+   * @param user The user address
+   * @param nonce The settlement nonce
+   * @returns true if settled, false otherwise
+   */
+  async isUserSettled(user: string, nonce: number): Promise<boolean> {
+    try {
+      const settledAmount = await this.contract.settlements(user, nonce);
+      return settledAmount > 0n;
+    } catch (error) {
+      console.error('Error checking user settlement:', error);
+      return false;
+    }
+  }
 }
 
 // Vault contract ABI (minimal interface for redeemVoucher)
@@ -88,7 +104,11 @@ export const VAULT_ABI = [
   'function deposit(address user, address token, uint256 amount) external',
   'function deposits(address) external view returns (uint256)',
   'function usedSlip(address, bytes32) external view returns (bool)',
+  'function recordSettlement(address user, uint256 nonce, uint256 totalSettled) external',
+  'function isUserSettled(address user, uint256 nonce) external view returns (bool)',
+  'function settlements(address, uint256) external view returns (uint256)',
   'event VoucherRedeemed(address indexed payer, address indexed payee, uint256 amount, bytes32 slipId)',
   'event Deposit(address indexed user, uint256 amount)',
+  'event SettlementRecorded(address indexed user, uint256 indexed nonce, uint256 totalSettled)',
 ] as const;
 

@@ -1,6 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import voucherRoutes from './routes/voucher';
+import refillRoutes from './routes/refill';
 import { getDB } from './db/inMemory';
 
 dotenv.config();
@@ -17,6 +18,8 @@ app.get('/health', (req, res) => {
 
 // Voucher API routes
 app.use('/api/v1', voucherRoutes);
+// Refill API routes
+app.use('/api/v1', refillRoutes);
 
 // Initialize database on startup
 async function startServer() {

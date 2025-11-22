@@ -24,6 +24,9 @@ contract Vault is Ownable {
     /// @dev Mapping to track used voucher slip IDs per payer
     mapping(address => mapping(bytes32 => bool)) public usedSlip;
 
+    /// @dev Mapping to track settlement records per user and nonce
+    mapping(address => mapping(uint256 => uint256)) public settlements;
+
     /// @dev Event emitted when a user deposits tokens
     /// @param user The address of the user making the deposit
     /// @param amount The amount of tokens deposited
@@ -39,6 +42,16 @@ contract Vault is Ownable {
         address indexed payee,
         uint256 amount,
         bytes32 slipId
+    );
+
+    /// @dev Event emitted when a user settlement is recorded
+    /// @param user The address of the user being settled
+    /// @param nonce The settlement nonce
+    /// @param totalSettled The total amount settled
+    event SettlementRecorded(
+        address indexed user,
+        uint256 indexed nonce,
+        uint256 totalSettled
     );
 
     /**
@@ -152,6 +165,34 @@ contract Vault is Ownable {
         );
         
         emit VoucherRedeemed(payerAddress, payeeAddress, amount, slipId);
+    }
+
+    /**
+     * @dev Records a settlement for a user with a specific nonce
+     * @param user The address of the user being settled
+     * @param nonce The settlement nonce (prevents replay)
+     * @param totalSettled The total amount settled for this nonce
+     * 
+     * Requirements:
+     * - Only the owner can call this function
+     * - The nonce must not have been used before for this user
+     */
+    function recordSettlement(address user, uint256 nonce, uint256 totalSettled) external onlyOwner {
+        require(user != address(0), "Vault: invalid user address");
+        require(settlements[user][nonce] == 0, "Vault: settlement already recorded for this nonce");
+        
+        settlements[user][nonce] = totalSettled;
+        emit SettlementRecorded(user, nonce, totalSettled);
+    }
+
+    /**
+     * @dev Check if a user is settled for a specific nonce
+     * @param user The address of the user
+     * @param nonce The settlement nonce
+     * @return true if settled, false otherwise
+     */
+    function isUserSettled(address user, uint256 nonce) external view returns (bool) {
+        return settlements[user][nonce] > 0;
     }
 
     /**

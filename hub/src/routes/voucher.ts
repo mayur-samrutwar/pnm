@@ -136,6 +136,15 @@ router.post('/redeem', async (req: Request, res: Response) => {
       });
     }
 
+    // Store slip record
+    await db.addSlip({
+      slipId: voucher.slipId,
+      payer: voucher.payerAddress,
+      amount: voucher.amount.toString(),
+      status: 'redeemed',
+      timestamp: Date.now()
+    });
+
     // Mark slip as used (atomic operation)
     await db.markSlipUsed(voucher.slipId);
 

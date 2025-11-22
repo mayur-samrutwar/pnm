@@ -222,14 +222,37 @@ class MonotonicCounterManager(
     }
 
     /**
-     * Reset counter (for testing)
+     * Reset counter with new limit (for refill)
      */
-    suspend fun reset() = withContext(Dispatchers.IO) {
-        encryptedPrefs.edit()
-            .putLong(KEY_CUMULATIVE, 0L)
-            .putInt(KEY_COUNTER, 0)
-            .remove(KEY_STATE_SIGNATURE)
-            .apply()
+    suspend fun reset(
+        cumulative: Long = 0L,
+        counter: Int = 0,
+        newLimit: Long? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val limit = newLimit ?: encryptedPrefs.getLong(KEY_OFFLINE_LIMIT, 0L)
+            
+            val state = CounterState(
+                cumulative = cumulative,
+                counter = counter,
+                limit = limit
+            )
+            
+            val signature = signState(state) ?: return@withContext false
+
+            encryptedPrefs.edit()
+                .putLong(KEY_OFFLINE_LIMIT, limit)
+                .putLong(KEY_CUMULATIVE, cumulative)
+                .putInt(KEY_COUNTER, counter)
+                .putString(KEY_STATE_SIGNATURE, signature)
+                .apply()
+
+            Log.d(TAG, "Counter reset: cumulative=$cumulative, counter=$counter, limit=$limit")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to reset counter: ${e.message}", e)
+            false
+        }
     }
 
     /**

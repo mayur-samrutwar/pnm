@@ -9,9 +9,30 @@ interface DepositRecord {
   timestamp: number;
 }
 
+interface SlipRecord {
+  slipId: string;
+  payer?: string;
+  userAddress?: string;
+  amount: string;
+  status: string;
+  timestamp: number;
+}
+
+interface RefillRequest {
+  userAddress: string;
+  nonce: string;
+  newLimit: number;
+  expiry: number;
+  token: string;
+  timestamp: number;
+  proof?: string;
+}
+
 interface Database {
   usedSlips: Set<string>;
   deposits: DepositRecord[];
+  slips: SlipRecord[];
+  refillRequests?: RefillRequest[];
 }
 
 const DB_FILE_PATH = path.join(__dirname, '../../data/db.json');
@@ -24,6 +45,8 @@ export class InMemoryDB {
     this.db = {
       usedSlips: new Set<string>(),
       deposits: [],
+      slips: [],
+      refillRequests: [],
     };
   }
 
@@ -47,6 +70,8 @@ export class InMemoryDB {
         
         this.db.usedSlips = new Set(data.usedSlips || []);
         this.db.deposits = data.deposits || [];
+        this.db.slips = data.slips || [];
+        this.db.refillRequests = data.refillRequests || [];
       }
     } catch (error) {
       console.error('Error initializing database:', error);
@@ -138,17 +163,47 @@ export class InMemoryDB {
     this.db = {
       usedSlips: new Set<string>(),
       deposits: [],
+      slips: [],
+      refillRequests: [],
     };
   }
 
   /**
    * Get database state as object (for inspection)
    */
-  getState(): { usedSlips: string[]; deposits: DepositRecord[] } {
+  getState(): { usedSlips: string[]; deposits: DepositRecord[]; slips: SlipRecord[]; refillRequests: RefillRequest[] } {
     return {
       usedSlips: Array.from(this.db.usedSlips),
       deposits: [...this.db.deposits],
+      slips: [...this.db.slips],
+      refillRequests: [...(this.db.refillRequests || [])],
     };
+  }
+
+  /**
+   * Get slips array (for refill verification)
+   */
+  get slips(): SlipRecord[] {
+    return [...this.db.slips];
+  }
+
+  /**
+   * Add slip record
+   */
+  async addSlip(slip: SlipRecord): Promise<void> {
+    this.db.slips.push(slip);
+    await this.persist();
+  }
+
+  /**
+   * Update slip status
+   */
+  async updateSlipStatus(slipId: string, status: string): Promise<void> {
+    const slip = this.db.slips.find(s => s.slipId === slipId);
+    if (slip) {
+      slip.status = status;
+      await this.persist();
+    }
   }
 }
 
