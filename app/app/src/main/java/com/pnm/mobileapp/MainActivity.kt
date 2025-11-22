@@ -25,6 +25,7 @@ import com.pnm.mobileapp.ui.screen.HistoryScreen
 import com.pnm.mobileapp.ui.screen.HomeScreen
 import com.pnm.mobileapp.ui.screen.HubScreen
 import com.pnm.mobileapp.ui.screen.MerchantScreen
+import com.pnm.mobileapp.ui.screen.PayByQRScreen
 import com.pnm.mobileapp.ui.screen.ProfileScreen
 import com.pnm.mobileapp.ui.screen.SettingsScreen
 import com.pnm.mobileapp.ui.screen.UserScreen
@@ -160,15 +161,9 @@ fun MainScreen(
                     }
                 },
                 onPayClick = {
-                    // Pay button opens create slip flow
-                    // Navigate to home if not already there, then trigger pay
-                    if (currentBottomNavRoute != "home") {
-                        navController.navigate("home") {
-                            popUpTo("home")
-                            launchSingleTop = true
-                        }
+                    navController.navigate("payqr") {
+                        launchSingleTop = true
                     }
-                    // The pay action will be handled by HomeScreen
                 }
             )
         }
@@ -262,6 +257,20 @@ fun MainScreen(
             navController.navigate("home") {
                 popUpTo("hub") { inclusive = true }
             }
+        }
+        
+        composable("payqr") {
+            PayByQRScreen(
+                onBack = {
+                    navController.popBackStack()
+                },
+                onQRScanned = { qrData ->
+                    // Handle scanned QR code
+                    // For now, just show a toast and go back
+                    // TODO: Process the payment/voucher
+                    navController.popBackStack()
+                }
+            )
         }
     }
 
