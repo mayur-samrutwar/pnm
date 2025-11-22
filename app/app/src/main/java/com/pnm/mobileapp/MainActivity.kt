@@ -56,7 +56,7 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             MobileAppTheme {
-                MainScreen(database, hubApiService)
+                MainScreen(database, hubApiService, this)
             }
         }
     }
@@ -66,7 +66,8 @@ class MainActivity : FragmentActivity() {
 @Composable
 fun MainScreen(
     database: AppDatabase,
-    hubApiService: HubApiService
+    hubApiService: HubApiService,
+    activity: FragmentActivity
 ) {
     val context = LocalContext.current
     var selectedRole by remember { mutableStateOf(UserRole.USER) }
@@ -117,7 +118,7 @@ fun MainScreen(
                         onShowSlipDialog = { slip, voucherJson ->
                             showSlipDialog = Pair(slip, voucherJson)
                         },
-                        activity = this@MainActivity
+                        activity = activity
                     )
                 }
                 composable("merchant") {

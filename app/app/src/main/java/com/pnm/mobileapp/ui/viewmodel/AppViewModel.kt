@@ -1,11 +1,13 @@
 package com.pnm.mobileapp.ui.viewmodel
 
 import android.content.Context
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pnm.mobileapp.crypto.CounterManager
 import com.pnm.mobileapp.crypto.Signer
 import com.pnm.mobileapp.data.model.Wallet
+import com.pnm.mobileapp.secure.BiometricAuthHelper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch

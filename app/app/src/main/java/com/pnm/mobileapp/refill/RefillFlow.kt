@@ -71,6 +71,14 @@ class RefillFlow(
             val refillResponse = response.body()!!
             val refillToken = refillResponse.refillToken
 
+            if (refillToken == null) {
+                Log.e(TAG, "Refill token is null")
+                return@withContext RefillResult(
+                    success = false,
+                    message = "Refill token not provided"
+                )
+            }
+
             // Verify hub signature
             val isValid = verifyRefillToken(refillToken, userAddress)
             if (!isValid) {
@@ -82,7 +90,13 @@ class RefillFlow(
             }
 
             // Parse refill token
-            val tokenData = parseRefillToken(refillToken)
+            val tokenData = parseRefillToken(refillToken) ?: run {
+                Log.e(TAG, "Failed to parse refill token")
+                return@withContext RefillResult(
+                    success = false,
+                    message = "Failed to parse refill token"
+                )
+            }
             if (tokenData == null) {
                 Log.e(TAG, "Failed to parse refill token")
                 return@withContext RefillResult(

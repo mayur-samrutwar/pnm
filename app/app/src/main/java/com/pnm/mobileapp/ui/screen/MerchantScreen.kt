@@ -227,7 +227,7 @@ fun MerchantScreen(
                                 }
                             )
                         }
-                        HorizontalDivider()
+                        Divider()
                     }
                     
                     Button(

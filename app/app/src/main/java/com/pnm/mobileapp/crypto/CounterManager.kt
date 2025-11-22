@@ -2,6 +2,7 @@ package com.pnm.mobileapp.crypto
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.pnm.mobileapp.secure.HardwareKeystoreManager
@@ -14,15 +15,17 @@ import kotlinx.coroutines.withContext
  * Uses MonotonicCounterManager for hardware-backed secure counter when available
  */
 class CounterManager(private val context: Context) {
-    private val hardwareKeystoreManager = HardwareKeystoreManager(context)
-    private val monotonicCounterManager = MonotonicCounterManager(context, hardwareKeystoreManager)
-    private var useHardwareCounter = false
     companion object {
+        private const val TAG = "CounterManager"
         private const val PREFS_NAME = "pnm_counter_prefs"
         private const val KEY_OFFLINE_LIMIT = "offline_limit"
         private const val KEY_CUMULATIVE = "cumulative"
         private const val KEY_COUNTER = "counter"
     }
+
+    private val hardwareKeystoreManager = HardwareKeystoreManager(context)
+    private val monotonicCounterManager = MonotonicCounterManager(context, hardwareKeystoreManager)
+    private var useHardwareCounter = false
 
     private val masterKey = MasterKey.Builder(context)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
