@@ -27,6 +27,7 @@ import com.pnm.mobileapp.ui.screen.HubScreen
 import com.pnm.mobileapp.ui.screen.MerchantScreen
 import com.pnm.mobileapp.ui.screen.PayByQRScreen
 import com.pnm.mobileapp.ui.screen.ProfileScreen
+import com.pnm.mobileapp.ui.screen.RequestPaymentScreen
 import com.pnm.mobileapp.ui.screen.SettingsScreen
 import com.pnm.mobileapp.ui.screen.UserScreen
 import com.pnm.mobileapp.ui.theme.MobileAppTheme
@@ -272,6 +273,14 @@ fun MainScreen(
                 }
             )
         }
+        
+        composable("request") {
+            RequestPaymentScreen(
+                onBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
     }
 
     showSlipDialog?.let { (slip, voucherJson) ->
@@ -303,7 +312,10 @@ fun MainContentScreen(
                     UserRole.USER -> HomeScreen(
                         viewModel = viewModel,
                         onShowSlipDialog = onShowSlipDialog,
-                        activity = activity
+                        activity = activity,
+                        onNavigateToRequest = {
+                            onNavigate("request")
+                        }
                     )
                     UserRole.MERCHANT -> {
                         val wallet by viewModel.wallet.collectAsState()

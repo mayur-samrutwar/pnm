@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.CallReceived
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.RequestQuote
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.*
@@ -47,7 +48,8 @@ import java.util.UUID
 fun HomeScreen(
     viewModel: AppViewModel,
     onShowSlipDialog: (com.pnm.mobileapp.data.model.Slip, String) -> Unit,
-    activity: androidx.fragment.app.FragmentActivity?
+    activity: androidx.fragment.app.FragmentActivity?,
+    onNavigateToRequest: () -> Unit = {}
 ) {
     val wallet by viewModel.wallet.collectAsState()
     val showSoftwareFallbackWarning by viewModel.showSoftwareFallbackWarning.collectAsState()
@@ -160,7 +162,10 @@ fun HomeScreen(
                             )
                         } else {
                             Text(
-                                text = usdcBalance?.let { "$it" } ?: "0.0",
+                                text = usdcBalance?.let { 
+                                    val amount = it.toDoubleOrNull() ?: 0.0
+                                    String.format("%.2f", amount)
+                                } ?: "0.00",
                                 style = MaterialTheme.typography.headlineLarge.copy(
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White,
@@ -394,6 +399,48 @@ fun HomeScreen(
                         )
                         Text(
                             text = "Deposit",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFF1E293B),
+                                fontSize = 14.sp
+                            )
+                        )
+                    }
+                }
+            }
+            
+            // Third Row: Request
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Request Card
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(100.dp)
+                        .clickable { onNavigateToRequest() },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.White
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.RequestQuote,
+                            contentDescription = "Request",
+                            modifier = Modifier.size(28.dp),
+                            tint = Color(0xFF8B5CF6)
+                        )
+                        Text(
+                            text = "Request",
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontWeight = FontWeight.Medium,
                                 color = Color(0xFF1E293B),
