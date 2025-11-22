@@ -318,17 +318,12 @@ fun MainContentScreen(
             )
         }
         
-        // Floating bottom navigation
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-        ) {
-            BottomNavigationBar(
-                currentRoute = currentRoute,
-                onNavigate = onNavigate,
-                onPayClick = onPayClick
-            )
-        }
+        // Bottom navigation bar
+        BottomNavigationBar(
+            currentRoute = currentRoute,
+            onNavigate = onNavigate,
+            onPayClick = onPayClick,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
     }
 }
