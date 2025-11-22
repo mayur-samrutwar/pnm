@@ -169,6 +169,22 @@ export class InMemoryDB {
   }
 
   /**
+   * Clear all used slips (useful for testing)
+   */
+  async clearUsedSlips(): Promise<void> {
+    this.db.usedSlips.clear();
+    await this.persist();
+  }
+
+  /**
+   * Remove a specific slip from used slips (useful for retrying failed redemptions)
+   */
+  async removeUsedSlip(slipId: string): Promise<void> {
+    this.db.usedSlips.delete(slipId);
+    await this.persist();
+  }
+
+  /**
    * Get database state as object (for inspection)
    */
   getState(): { usedSlips: string[]; deposits: DepositRecord[]; slips: SlipRecord[]; refillRequests: RefillRequest[] } {

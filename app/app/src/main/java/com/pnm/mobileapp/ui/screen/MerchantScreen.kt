@@ -38,6 +38,7 @@ import com.pnm.mobileapp.util.VoucherValidator
 fun MerchantScreen(
     viewModel: MerchantViewModel,
     merchantEthAddress: String? = null, // Merchant's Ethereum address for receiving payments
+    payerEthAddress: String? = null, // Payer's Ethereum address (for fixing old vouchers)
     @Suppress("UNUSED_PARAMETER") onScanQR: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -64,11 +65,15 @@ fun MerchantScreen(
                 }
                 
                 // Create Slip from Voucher
+                // Extract Ethereum address from voucher if available, otherwise leave empty
+                val ethAddress = voucher.ethAddress ?: ""
+                android.util.Log.d("MerchantScreen", "Scanned voucher: slipId=${voucher.slipId}, payer=${voucher.payer}, ethAddress=$ethAddress, rawJson=$json")
                 val slip = Slip(
                     slipId = voucher.slipId,
                     payer = voucher.payer,
                     amount = voucher.amount,
                     userAddress = voucher.payer,
+                    ethAddress = ethAddress, // Use Ethereum address from voucher JSON if available
                     cumulative = voucher.cumulative,
                     counter = voucher.counter,
                     publicKey = voucher.publicKey,
@@ -77,6 +82,7 @@ fun MerchantScreen(
                     timestamp = voucher.timestamp,
                     status = SlipStatus.PENDING
                 )
+                android.util.Log.d("MerchantScreen", "Created Slip: ethAddress=${slip.ethAddress}")
                 
                 // Save to Room database
                 viewModel.saveSlip(slip)
@@ -191,7 +197,7 @@ fun MerchantScreen(
                         if (syncableSlips.isEmpty()) {
                             Toast.makeText(context, "No slips to sync", Toast.LENGTH_SHORT).show()
                         } else {
-                            viewModel.syncSelectedSlips(syncableSlips, isOnline, merchantEthAddress)
+                            viewModel.syncSelectedSlips(syncableSlips, isOnline, merchantEthAddress, payerEthAddress)
                             val action = if (isOnline) "Validating" else "Redeeming"
                             Toast.makeText(context, "$action ${syncableSlips.size} slip(s)...", Toast.LENGTH_SHORT).show()
                         }

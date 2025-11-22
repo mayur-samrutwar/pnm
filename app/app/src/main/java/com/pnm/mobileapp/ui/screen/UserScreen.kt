@@ -218,7 +218,8 @@ fun UserScreen(
                                     val voucher = Voucher(
                                         slipId = slipId,
                                         payer = w.address,
-                                        amount = amount,
+                                        ethAddress = w.ethAddress, // Include Ethereum address in voucher JSON
+                                        amount = amountLong.toString(), // Store amount in micro USDC (6 decimals)
                                         cumulative = cumulative + amountLong,
                                         counter = counter + 1,
                                         publicKey = viewModel.getPublicKeyHex(),

@@ -51,7 +51,9 @@ class MainActivity : FragmentActivity() {
             applicationContext,
             AppDatabase::class.java,
             "pnm_database"
-        ).build()
+        )
+            .addMigrations(AppDatabase.MIGRATION_2_3)
+            .build()
 
         // Initialize Retrofit
         val retrofit = Retrofit.Builder()
@@ -82,9 +84,12 @@ fun MainScreen(
     val navController = rememberNavController()
     val appViewModel: AppViewModel = remember { AppViewModel(context, hubApiService) }
     val merchantViewModel = remember {
-        // Pass merchant's Ethereum address from their wallet
+        // Pass merchant's Ethereum address from their wallet (for receiving payments)
         val merchantEthAddress = appViewModel.wallet.value?.ethAddress
-        MerchantViewModel(database.pendingSlipDao(), hubApiService, merchantEthAddress)
+        // Also pass user's Ethereum address as payerEthAddress to fix old vouchers that don't have ethAddress set
+        // This assumes the user is redeeming their own vouchers, or we need to get it from the wallet
+        val payerEthAddress = appViewModel.wallet.value?.ethAddress // User's own address
+        MerchantViewModel(database.pendingSlipDao(), hubApiService, merchantEthAddress, payerEthAddress)
     }
     
     // Check if wallet exists
@@ -296,6 +301,7 @@ fun MainContentScreen(
                         MerchantScreen(
                             viewModel = merchantViewModel,
                             merchantEthAddress = wallet?.ethAddress,
+                            payerEthAddress = wallet?.ethAddress, // For fixing old vouchers - assume user is redeeming their own vouchers
                             onScanQR = { }
                         )
                     }

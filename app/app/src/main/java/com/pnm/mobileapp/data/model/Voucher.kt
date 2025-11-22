@@ -9,7 +9,9 @@ data class Voucher(
     @SerializedName("slipId")
     val slipId: String,
     @SerializedName("payer")
-    val payer: String, // userAddress/publicKey
+    val payer: String, // userAddress/publicKey (device address)
+    @SerializedName("ethAddress")
+    val ethAddress: String? = null, // Ethereum address (where deposits are) - optional for backward compatibility
     @SerializedName("amount")
     val amount: String,
     @SerializedName("cumulative")

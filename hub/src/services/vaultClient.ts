@@ -74,41 +74,64 @@ export class VaultClient {
    * @returns Transaction hash
    */
   async redeemVoucherByHub(voucher: Voucher): Promise<string> {
-    // Encode voucher payload (same format as redeemVoucher)
-    const voucherPayload = ethers.AbiCoder.defaultAbiCoder().encode(
-      [
-        'address', // contractAddress
-        'uint256', // expiry
-        'uint256', // chainId
-        'address', // payerAddress (Ethereum address where deposits are)
-        'address', // payeeAddress
-        'uint256', // amount
-        'uint256', // cumulative
-        'bytes32', // slipId
-      ],
-      [
-        voucher.contractAddress,
-        BigInt(voucher.expiry),
-        BigInt(voucher.chainId),
-        voucher.payerAddress, // This should be the Ethereum address
-        voucher.payeeAddress,
-        BigInt(voucher.amount),
-        BigInt(voucher.cumulative),
-        ethers.id(voucher.slipId), // Convert UUID to bytes32
-      ]
-    );
+    console.log('[VaultClient] redeemVoucherByHub called');
+    console.log('[VaultClient] Contract address:', this.contractAddress);
+    console.log('[VaultClient] Wallet address:', this.wallet.address);
+    
+    try {
+      // Encode voucher payload (same format as redeemVoucher)
+      const voucherPayload = ethers.AbiCoder.defaultAbiCoder().encode(
+        [
+          'address', // contractAddress
+          'uint256', // expiry
+          'uint256', // chainId
+          'address', // payerAddress (Ethereum address where deposits are)
+          'address', // payeeAddress
+          'uint256', // amount
+          'uint256', // cumulative
+          'bytes32', // slipId
+        ],
+        [
+          voucher.contractAddress,
+          BigInt(voucher.expiry),
+          BigInt(voucher.chainId),
+          voucher.payerAddress, // This should be the Ethereum address
+          voucher.payeeAddress,
+          BigInt(voucher.amount),
+          BigInt(voucher.cumulative),
+          ethers.id(voucher.slipId), // Convert UUID to bytes32
+        ]
+      );
 
-    // Call redeemVoucherByHub on the contract (hub signs as owner)
-    const tx = await this.contract.redeemVoucherByHub(voucherPayload);
+      console.log('[VaultClient] Voucher payload encoded, length:', voucherPayload.length);
+      console.log('[VaultClient] Calling redeemVoucherByHub on contract...');
 
-    // Wait for transaction to be mined
-    const receipt = await tx.wait();
+      // Call redeemVoucherByHub on the contract (hub signs as owner)
+      const tx = await this.contract.redeemVoucherByHub(voucherPayload);
+      console.log('[VaultClient] Transaction sent, hash:', tx.hash);
+      console.log('[VaultClient] Waiting for transaction to be mined...');
 
-    if (!receipt) {
-      throw new Error('Transaction receipt not found');
+      // Wait for transaction to be mined
+      const receipt = await tx.wait();
+      console.log('[VaultClient] Transaction mined, block number:', receipt?.blockNumber);
+
+      if (!receipt) {
+        throw new Error('Transaction receipt not found');
+      }
+
+      return receipt.hash;
+    } catch (error: any) {
+      console.error('[VaultClient] Error in redeemVoucherByHub:', error);
+      console.error('[VaultClient] Error message:', error.message);
+      console.error('[VaultClient] Error code:', error.code);
+      if (error.reason) {
+        console.error('[VaultClient] Error reason:', error.reason);
+      }
+      if (error.data) {
+        console.error('[VaultClient] Error data:', error.data);
+      }
+      throw error;
     }
-
-    return receipt.hash;
   }
 
   /**

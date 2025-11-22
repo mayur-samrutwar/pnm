@@ -262,7 +262,13 @@ class AppViewModel(
                             // Update limit without resetting cumulative
                             val currentLimit = counterManager.getLimit()
                             android.util.Log.d("AppViewModel", "Current limit: $currentLimit, New limit: $limitInMicroUSDC")
-                            if (currentLimit != limitInMicroUSDC) {
+                            
+                            // If counter was never initialized (limit is 0), initialize it first
+                            if (currentLimit == 0L) {
+                                android.util.Log.d("AppViewModel", "Counter not initialized, initializing with limit: $limitInMicroUSDC")
+                                counterManager.initCounter(limitInMicroUSDC)
+                                android.util.Log.d("AppViewModel", "Counter initialized with limit: $limitInMicroUSDC")
+                            } else if (currentLimit != limitInMicroUSDC) {
                                 // updateLimit is a suspend function, so we need to await it
                                 counterManager.updateLimit(limitInMicroUSDC)
                                 // Verify the update succeeded
@@ -271,6 +277,7 @@ class AppViewModel(
                                     android.util.Log.d("AppViewModel", "✅ Successfully updated offline limit to: $limitInMicroUSDC (from vault balance: ${balanceResponse.balanceFormatted})")
                                 } else {
                                     android.util.Log.e("AppViewModel", "❌ Failed to update limit! Expected: $limitInMicroUSDC, Got: $updatedLimit")
+                                    android.util.Log.e("AppViewModel", "This might be due to signature verification failure. Counter may need to be re-initialized.")
                                 }
                             } else {
                                 android.util.Log.d("AppViewModel", "Limit unchanged, no update needed")

@@ -53,7 +53,7 @@ data class HubVoucher(
     @SerializedName("amount")
     val amount: Long, // Number, not string
     @SerializedName("chainId")
-    val chainId: Int = 1,
+    val chainId: Int = Constants.CHAIN_ID,
     @SerializedName("cumulative")
     val cumulative: Long,
     @SerializedName("counter")
@@ -118,8 +118,13 @@ private fun String?.ensurePublicKeyFormat(): String? {
 
 /**
  * Extension function to convert Slip to HubVoucher
+ * @param merchantAddress The merchant's Ethereum address (payee)
+ * @param payerEthAddress Optional payer's Ethereum address to use if Slip.ethAddress is empty (for old vouchers)
  */
-fun Slip.toHubVoucher(merchantAddress: String = "0x0000000000000000000000000000000000000000"): HubVoucher {
+fun Slip.toHubVoucher(
+    merchantAddress: String = "0x0000000000000000000000000000000000000000",
+    payerEthAddress: String? = null
+): HubVoucher {
     // Use rawJson if available, otherwise construct from Slip fields
     return if (rawJson.isNotEmpty()) {
         try {
@@ -130,6 +135,7 @@ fun Slip.toHubVoucher(merchantAddress: String = "0x00000000000000000000000000000
             val originalVoucher = Voucher(
                 slipId = voucher.slipId,
                 payer = voucher.payer,
+                ethAddress = voucher.ethAddress, // Include ethAddress in original voucher for P-256 verification
                 amount = voucher.amount,
                 cumulative = voucher.cumulative,
                 counter = voucher.counter,
@@ -139,11 +145,30 @@ fun Slip.toHubVoucher(merchantAddress: String = "0x00000000000000000000000000000
             )
             val originalJson = gson.toJson(originalVoucher)
             
+            // Use Ethereum address from Slip, or provided payerEthAddress, or fallback to voucher.payer (device address)
+            val finalPayerEthAddress = when {
+                this.ethAddress.isNotEmpty() -> {
+                    android.util.Log.d("HubApiService", "toHubVoucher: Using Slip.ethAddress=${this.ethAddress}")
+                    this.ethAddress
+                }
+                payerEthAddress != null && payerEthAddress.isNotEmpty() -> {
+                    android.util.Log.d("HubApiService", "toHubVoucher: Using provided payerEthAddress=$payerEthAddress")
+                    payerEthAddress
+                }
+                else -> {
+                    android.util.Log.w("HubApiService", "toHubVoucher: WARNING - No Ethereum address found! Using device address voucher.payer=${voucher.payer} (this will likely fail on-chain redemption)")
+                    voucher.payer
+                }
+            }
+            android.util.Log.d("HubApiService", "toHubVoucher: Slip.ethAddress=${this.ethAddress}, provided payerEthAddress=$payerEthAddress, voucher.payer=${voucher.payer}, using finalPayerEthAddress=$finalPayerEthAddress")
+            
+            android.util.Log.d("HubApiService", "toHubVoucher: Creating HubVoucher with payerAddress=$finalPayerEthAddress, payeeAddress=$merchantAddress")
+            
             HubVoucher(
-                payerAddress = (this.ethAddress.ifEmpty { voucher.payer }).ensureEthAddressFormat(), // Use Ethereum address if available
+                payerAddress = finalPayerEthAddress.ensureEthAddressFormat(), // Use Ethereum address if available
                 payeeAddress = merchantAddress.ensureEthAddressFormat(),
                 amount = voucher.amount.toLongOrNull() ?: 0L,
-                chainId = 1,
+                chainId = Constants.CHAIN_ID,
                 cumulative = voucher.cumulative,
                 counter = voucher.counter,
                 expiry = (voucher.timestamp / 1000) + (30 * 24 * 60 * 60), // 30 days from timestamp
@@ -155,14 +180,14 @@ fun Slip.toHubVoucher(merchantAddress: String = "0x00000000000000000000000000000
             )
         } catch (e: Exception) {
             // Fallback: construct from Slip fields
-            createHubVoucherFromSlip(merchantAddress)
+            createHubVoucherFromSlip(merchantAddress, payerEthAddress)
         }
     } else {
-        createHubVoucherFromSlip(merchantAddress)
+        createHubVoucherFromSlip(merchantAddress, payerEthAddress)
     }
 }
 
-private fun Slip.createHubVoucherFromSlip(merchantAddress: String): HubVoucher {
+private fun Slip.createHubVoucherFromSlip(merchantAddress: String, payerEthAddress: String? = null): HubVoucher {
     fun String.ensureEthAddressFormat(): String {
         var addr = this.trim()
         if (addr.startsWith("0x")) {
@@ -181,11 +206,19 @@ private fun Slip.createHubVoucherFromSlip(merchantAddress: String): HubVoucher {
         }
     }
     
+    // Prefer Ethereum address from Slip, or provided payerEthAddress, or fallback to payer/userAddress
+    val finalPayerEthAddress = when {
+        ethAddress.isNotEmpty() -> ethAddress
+        payerEthAddress != null && payerEthAddress.isNotEmpty() -> payerEthAddress
+        else -> payer.ifEmpty { userAddress }
+    }
+    android.util.Log.d("HubApiService", "createHubVoucherFromSlip: ethAddress=$ethAddress, provided payerEthAddress=$payerEthAddress, payer=$payer, userAddress=$userAddress, using finalPayerEthAddress=$finalPayerEthAddress")
+    
     return HubVoucher(
-        payerAddress = (ethAddress.ifEmpty { payer.ifEmpty { userAddress } }).ensureEthAddressFormat(), // Prefer Ethereum address
+        payerAddress = finalPayerEthAddress.ensureEthAddressFormat(), // Prefer Ethereum address
         payeeAddress = merchantAddress.ensureEthAddressFormat(),
         amount = amount.toLongOrNull() ?: 0L,
-        chainId = 1,
+        chainId = Constants.CHAIN_ID,
         cumulative = cumulative,
         counter = counter,
         expiry = (timestamp / 1000) + (30 * 24 * 60 * 60), // 30 days from timestamp

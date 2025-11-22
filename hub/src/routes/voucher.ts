@@ -6,7 +6,12 @@ import { getDB } from '../db/inMemory';
 const router = Router();
 
 // Configuration: set to true to actually call on-chain redeem, false to just reserve
-const REDEEM_ON_CHAIN = process.env.REDEEM_ON_CHAIN === 'true';
+// Use a function to get the value dynamically in case env vars are loaded after module init
+function getRedeemOnChain(): boolean {
+  const value = process.env.REDEEM_ON_CHAIN;
+  return value === 'true' || value === '1' || value === 'True' || value === 'TRUE';
+}
+const REDEEM_ON_CHAIN = getRedeemOnChain();
 
 let vaultClient: VaultClient | null = null;
 
@@ -196,64 +201,140 @@ router.post('/redeem', async (req: Request, res: Response) => {
     // Check if slip has already been used (atomic check)
     const db = getDB();
     if (db.isSlipUsed(voucher.slipId)) {
-      return res.status(400).json({
-        status: 'error',
-        reason: 'Voucher slip already used',
-      });
+      // Check if this slip was only validated (not redeemed) - allow retrying on-chain redemption
+      const existingSlip = db.getState().slips.find(s => s.slipId === voucher.slipId);
+      if (existingSlip && existingSlip.status === 'validated') {
+        // Allow retrying on-chain redemption for previously validated slips
+        console.log('[REDEEM] Slip was previously validated but not redeemed, allowing retry...');
+        await db.removeUsedSlip(voucher.slipId);
+      } else if (existingSlip && existingSlip.status === 'redeemed') {
+        // Already redeemed on-chain - don't allow retrying
+        return res.status(400).json({
+          status: 'error',
+          reason: 'Voucher slip already redeemed on-chain',
+        });
+      } else {
+        // Unknown state - don't allow
+        return res.status(400).json({
+          status: 'error',
+          reason: 'Voucher slip already used',
+        });
+      }
     }
 
     let txHash: string | undefined;
     let redemptionStatus = 'validated'; // Default: only validated, not redeemed
 
     // Optionally redeem on-chain
-    if (REDEEM_ON_CHAIN) {
+    const redeemOnChain = getRedeemOnChain(); // Get fresh value
+    console.log('[REDEEM] Starting on-chain redemption process...');
+    console.log('[REDEEM] REDEEM_ON_CHAIN env:', process.env.REDEEM_ON_CHAIN);
+    console.log('[REDEEM] REDEEM_ON_CHAIN parsed:', redeemOnChain);
+    
+    if (redeemOnChain) {
       const client = getVaultClient();
+      console.log('[REDEEM] Vault client:', client ? 'initialized' : 'NOT initialized');
+      
       if (client) {
         try {
           // Check if this is a P-256 voucher (has publicKey and originalVoucherJson)
-          if (voucher.publicKey && voucher.originalVoucherJson) {
+          const isP256Voucher = !!(voucher.publicKey && voucher.originalVoucherJson);
+          console.log('[REDEEM] Is P-256 voucher:', isP256Voucher);
+          console.log('[REDEEM] Has publicKey:', !!voucher.publicKey);
+          console.log('[REDEEM] Has originalVoucherJson:', !!voucher.originalVoucherJson);
+          
+          if (isP256Voucher) {
             // For P-256 vouchers, use redeemVoucherByHub which allows the hub to redeem
             // after verifying P-256 signature off-chain
-            console.log('Redeeming P-256 voucher on-chain using hub authority...');
-            console.log('Payer address (Ethereum):', voucher.payerAddress);
-            console.log('Payee address:', voucher.payeeAddress);
-            console.log('Amount:', voucher.amount);
+            console.log('[REDEEM] Redeeming P-256 voucher on-chain using hub authority...');
+            console.log('[REDEEM] Payer address (Ethereum):', voucher.payerAddress);
+            console.log('[REDEEM] Payee address:', voucher.payeeAddress);
+            console.log('[REDEEM] Full voucher object:', JSON.stringify(voucher, null, 2));
+            console.log('[REDEEM] Amount:', voucher.amount);
+            console.log('[REDEEM] Cumulative:', voucher.cumulative);
+            console.log('[REDEEM] SlipId:', voucher.slipId);
+            console.log('[REDEEM] Contract address:', voucher.contractAddress);
+            
+            // Check deposit balance for payer address before attempting redemption
+            try {
+              const { ethers } = require('ethers');
+              const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
+              const vaultAbi = ['function deposits(address) external view returns (uint256)'];
+              const vaultContract = new ethers.Contract(process.env.VAULT_CONTRACT_ADDRESS!, vaultAbi, provider);
+              const depositBalance = await vaultContract.deposits(voucher.payerAddress);
+              console.log('[REDEEM] Deposit balance for', voucher.payerAddress, ':', ethers.formatUnits(depositBalance, 6), 'USDC');
+              console.log('[REDEEM] Required cumulative:', ethers.formatUnits(BigInt(voucher.cumulative), 6), 'USDC');
+              if (depositBalance < BigInt(voucher.cumulative)) {
+                console.error('[REDEEM] ⚠️ Insufficient deposits! Balance:', ethers.formatUnits(depositBalance, 6), 'USDC, Required:', ethers.formatUnits(BigInt(voucher.cumulative), 6), 'USDC');
+              }
+            } catch (balanceError) {
+              console.warn('[REDEEM] Could not check deposit balance:', balanceError);
+            }
             
             txHash = await client.redeemVoucherByHub(voucher);
-            console.log('P-256 voucher redeemed on-chain successfully. Transaction hash:', txHash);
+            console.log('[REDEEM] ✅ P-256 voucher redeemed on-chain successfully. Transaction hash:', txHash);
             redemptionStatus = 'redeemed';
           } else {
             // This is a secp256k1 voucher - can redeem on-chain
+            console.log('[REDEEM] Redeeming secp256k1 voucher on-chain...');
             txHash = await client.redeemVoucher(voucher, voucher.signature);
-            console.log('On-chain redemption successful. Transaction hash:', txHash);
+            console.log('[REDEEM] ✅ On-chain redemption successful. Transaction hash:', txHash);
             redemptionStatus = 'redeemed';
           }
         } catch (error: any) {
-          console.error('Error redeeming on-chain:', error);
-          console.error('Error details:', error.message);
+          console.error('[REDEEM] ❌ Error redeeming on-chain:', error);
+          console.error('[REDEEM] Error type:', error.constructor?.name);
+          console.error('[REDEEM] Error message:', error.message);
+          console.error('[REDEEM] Error stack:', error.stack);
+          
           if (error.data) {
-            console.error('Error data:', error.data);
+            console.error('[REDEEM] Error data:', error.data);
           }
+          if (error.reason) {
+            console.error('[REDEEM] Error reason:', error.reason);
+          }
+          if (error.transaction) {
+            console.error('[REDEEM] Transaction that failed:', error.transaction);
+          }
+          if (error.code) {
+            console.error('[REDEEM] Error code:', error.code);
+          }
+          if (error.info) {
+            console.error('[REDEEM] Error info:', JSON.stringify(error.info, null, 2));
+          }
+          
           // Don't mark as redeemed if on-chain redemption failed
           redemptionStatus = 'validated';
         }
       } else {
-        console.warn('Vault client not initialized, skipping on-chain redeem');
+        console.warn('[REDEEM] ⚠️ Vault client not initialized, skipping on-chain redeem');
         redemptionStatus = 'validated';
       }
+      } else {
+        console.log('[REDEEM] On-chain redemption disabled (REDEEM_ON_CHAIN=false)');
+        console.log('[REDEEM] Check .env file - REDEEM_ON_CHAIN should be set to "true"');
     }
 
     // Always store the slip record (validated or redeemed)
-    // Store slip record
-    await db.addSlip({
-      slipId: voucher.slipId,
-      payer: voucher.payerAddress,
-      amount: voucher.amount.toString(),
-      status: redemptionStatus === 'redeemed' ? 'redeemed' : 'validated',
-      timestamp: Date.now()
-    });
+    // Update existing slip or create new one
+    const existingSlip = db.getState().slips.find(s => s.slipId === voucher.slipId);
+    if (existingSlip) {
+      // Update existing slip status
+      await db.updateSlipStatus(voucher.slipId, redemptionStatus === 'redeemed' ? 'redeemed' : 'validated');
+    } else {
+      // Store new slip record
+      await db.addSlip({
+        slipId: voucher.slipId,
+        payer: voucher.payerAddress,
+        amount: voucher.amount.toString(),
+        status: redemptionStatus === 'redeemed' ? 'redeemed' : 'validated',
+        timestamp: Date.now()
+      });
+    }
 
-    // Mark slip as used (atomic operation) - prevents double redemption
+    // Mark slip as used to prevent duplicate validation/redemption
+    // If on-chain redemption failed, the slip will be marked as 'validated' status
+    // and can be retried (the check above will allow retrying validated slips)
     await db.markSlipUsed(voucher.slipId);
 
     return res.status(200).json({
@@ -262,7 +343,9 @@ router.post('/redeem', async (req: Request, res: Response) => {
       message: txHash 
         ? 'Redeemed on-chain successfully' 
         : redemptionStatus === 'validated' 
-          ? 'Validated but not redeemed on-chain (P-256 voucher requires contract modification)'
+          ? (voucher.publicKey && voucher.originalVoucherJson 
+              ? 'Validated but on-chain redemption failed. Check hub logs for details.'
+              : 'Validated but not redeemed on-chain')
           : 'Validated',
     });
   } catch (error) {
@@ -527,6 +610,47 @@ router.post('/deposit', async (req: Request, res: Response) => {
  * Proxy Ethereum RPC requests to the local Hardhat node
  * This allows the mobile app to make RPC calls through the hub server
  */
+// Admin endpoint to clear used slips (for testing)
+router.post('/admin/clearUsedSlips', async (req: Request, res: Response) => {
+  try {
+    const db = getDB();
+    await db.clearUsedSlips();
+    return res.status(200).json({
+      status: 'success',
+      message: 'All used slips cleared',
+      count: 0
+    });
+  } catch (error) {
+    console.error('Error clearing used slips:', error);
+    return res.status(500).json({
+      status: 'error',
+      reason: 'Internal server error'
+    });
+  }
+});
+
+// Admin endpoint to get database stats
+router.get('/admin/stats', async (req: Request, res: Response) => {
+  try {
+    const db = getDB();
+    const state = db.getState();
+    return res.status(200).json({
+      status: 'success',
+      usedSlipsCount: state.usedSlips.length,
+      slipsCount: state.slips.length,
+      depositsCount: state.deposits.length,
+      redeemedCount: state.slips.filter(s => s.status === 'redeemed').length,
+      validatedCount: state.slips.filter(s => s.status === 'validated').length
+    });
+  } catch (error) {
+    console.error('Error getting stats:', error);
+    return res.status(500).json({
+      status: 'error',
+      reason: 'Internal server error'
+    });
+  }
+});
+
 router.post('/rpc', async (req: Request, res: Response) => {
   try {
     const rpcUrl = process.env.RPC_URL;

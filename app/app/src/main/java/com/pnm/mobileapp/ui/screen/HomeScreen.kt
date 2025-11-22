@@ -345,7 +345,8 @@ fun HomeScreen(
                                         val voucher = Voucher(
                                             slipId = slipId,
                                             payer = w.address,
-                                            amount = amountInput,
+                                            ethAddress = w.ethAddress, // Include Ethereum address in voucher JSON
+                                            amount = amountInMicroUSDC.toString(), // Store amount in micro USDC (6 decimals)
                                             cumulative = currentCumulative + amountInMicroUSDC,
                                             counter = currentCounter + 1,
                                             publicKey = publicKey,
