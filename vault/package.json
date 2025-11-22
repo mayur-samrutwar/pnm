@@ -6,6 +6,8 @@
     "compile": "hardhat compile",
     "test": "hardhat test",
     "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "deploy:baseTestnet": "hardhat run scripts/deploy.js --network baseTestnet",
+    "deploy:polygonMumbai": "hardhat run scripts/deploy.js --network polygonMumbai",
     "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
     "deploy:mainnet": "hardhat run scripts/deploy.js --network mainnet",
     "node": "hardhat node",

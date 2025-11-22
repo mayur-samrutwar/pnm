@@ -1,7 +1,7 @@
 const hre = require("hardhat");
 
 async function main() {
-  console.log("Deploying Vault contract...");
+  console.log("Deploying MockERC20 contract...");
   console.log("Network:", hre.network.name);
   console.log("Chain ID:", (await hre.ethers.provider.getNetwork()).chainId);
 
@@ -17,22 +17,26 @@ async function main() {
     throw new Error("Insufficient balance. Please fund your account with test tokens.");
   }
 
-  // Deploy Vault contract
-  const Vault = await hre.ethers.getContractFactory("Vault");
-  const vault = await Vault.deploy();
+  // Deploy MockERC20 contract
+  // Parameters: name, symbol, decimals, initialSupply
+  const MockERC20 = await hre.ethers.getContractFactory("MockERC20");
+  const token = await MockERC20.deploy(
+    "Test Token",
+    "TEST",
+    18,
+    hre.ethers.parseEther("1000000") // 1M tokens
+  );
 
-  await vault.waitForDeployment();
+  await token.waitForDeployment();
 
-  const vaultAddress = await vault.getAddress();
-  console.log("\n✅ Vault deployed successfully!");
-  console.log("Contract address:", vaultAddress);
+  const tokenAddress = await token.getAddress();
+  console.log("\n✅ MockERC20 deployed successfully!");
+  console.log("Contract address:", tokenAddress);
+  console.log("Token name: Test Token");
+  console.log("Token symbol: TEST");
+  console.log("Total supply: 1,000,000 TEST");
   console.log("\nSave this address to your .env file:");
-  console.log(`VAULT_CONTRACT_ADDRESS=${vaultAddress}`);
-
-  // Verify deployment
-  const owner = await vault.owner();
-  console.log("\nContract owner:", owner);
-  console.log("Owner matches deployer:", owner.toLowerCase() === deployer.address.toLowerCase());
+  console.log(`MOCK_ERC20_ADDRESS=${tokenAddress}`);
 }
 
 main()
