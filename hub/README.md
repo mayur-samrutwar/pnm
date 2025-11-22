@@ -1,11 +1,11 @@
 # Hub Server
 
-Node.js backend server built with Express and TypeScript, serving as the middleware between the mobile app and blockchain contracts.
+Node.js TypeScript Express server for voucher validation and redemption, serving as the middleware between clients and the Vault smart contract.
 
 ## Prerequisites
 
 - Node.js v18 or higher
-- npm v9 or higher (comes with Node.js)
+- npm v9 or higher
 
 ## Setup
 
@@ -14,177 +14,283 @@ Node.js backend server built with Express and TypeScript, serving as the middlew
    npm install
    ```
 
-2. Create a `.env` file in the root directory:
-   ```bash
-   cp .env.example .env
+2. Create a `.env` file in the root directory with the following **REQUIRED** variables:
+
+   ```env
+   # REQUIRED: RPC URL for blockchain connection
+   RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+   
+   # REQUIRED: Private key for signing transactions (without 0x prefix)
+   HUB_PRIVATE_KEY=your_private_key_here
+   
+   # REQUIRED: Vault contract address
+   VAULT_CONTRACT_ADDRESS=0x1234567890123456789012345678901234567890
+   
+   # Optional: Server port (default: 3000)
+   PORT=3000
+   
+   # Optional: Enable on-chain redemption (default: false)
+   REDEEM_ON_CHAIN=false
+   
+   # Optional: Node environment
+   NODE_ENV=development
    ```
-   Edit `.env` with your configuration values.
 
 ## Available Scripts
 
-### Development
+- `npm start` - Start production server (requires `npm run build` first)
+- `npm run dev` - Start development server with hot reload
+- `npm test` - Run Jest tests
+
+## Project Structure
+
+```
+hub/
+├── src/
+│   ├── index.ts              # Express server entry point
+│   ├── routes/
+│   │   └── voucher.ts        # Voucher API routes
+│   ├── services/
+│   │   ├── validator.ts      # Voucher validation logic
+│   │   └── vaultClient.ts    # Ethers.js client for Vault contract
+│   └── db/
+│       └── inMemory.ts       # In-memory database with JSON persistence
+├── data/
+│   └── db.json               # Persistent storage (auto-created)
+├── json/
+│   ├── voucher-schema.json   # JSON schema for vouchers
+│   └── example-voucher.json  # Example voucher
+├── package.json
+├── tsconfig.json
+└── jest.config.js
+```
+
+## API Endpoints
+
+### POST /api/v1/validate
+
+Validates a voucher's JSON schema, signature, expiry, and contract address.
+
+**Request Body:**
+```json
+{
+  "voucher": {
+    "payerAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+    "payeeAddress": "0x8ba1f109551bD432803012645Hac136c22C5e2",
+    "amount": 1000000000000000000,
+    "chainId": 1,
+    "cumulative": 5000000000000000000,
+    "counter": 42,
+    "expiry": 1735689600,
+    "slipId": "550e8400-e29b-41d4-a716-446655440000",
+    "contractAddress": "0x1234567890123456789012345678901234567890",
+    "signature": "0x1a2b3c4d5e6f7890abcdef..."
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "valid": true
+}
+```
+or
+```json
+{
+  "valid": false,
+  "reason": "Voucher has expired"
+}
+```
+
+**cURL Example:**
+```bash
+curl -X POST http://localhost:3000/api/v1/validate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "voucher": {
+      "payerAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+      "payeeAddress": "0x8ba1f109551bD432803012645Hac136c22C5e2",
+      "amount": 1000000000000000000,
+      "chainId": 1,
+      "cumulative": 5000000000000000000,
+      "counter": 42,
+      "expiry": 1735689600,
+      "slipId": "550e8400-e29b-41d4-a716-446655440000",
+      "contractAddress": "0x1234567890123456789012345678901234567890",
+      "signature": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12"
+    }
+  }'
+```
+
+### POST /api/v1/redeem
+
+Atomically redeems a voucher by checking the database for used slips, marking it as used, and optionally calling the on-chain redeem function.
+
+**Request Body:**
+```json
+{
+  "voucher": {
+    "payerAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+    "payeeAddress": "0x8ba1f109551bD432803012645Hac136c22C5e2",
+    "amount": 1000000000000000000,
+    "chainId": 1,
+    "cumulative": 5000000000000000000,
+    "counter": 42,
+    "expiry": 1735689600,
+    "slipId": "550e8400-e29b-41d4-a716-446655440000",
+    "contractAddress": "0x1234567890123456789012345678901234567890",
+    "signature": "0x1a2b3c4d5e6f7890abcdef..."
+  }
+}
+```
+
+**Response (when REDEEM_ON_CHAIN=false):**
+```json
+{
+  "status": "reserved"
+}
+```
+
+**Response (when REDEEM_ON_CHAIN=true):**
+```json
+{
+  "status": "reserved",
+  "txHash": "0xabc123..."
+}
+```
+
+**Response (error):**
+```json
+{
+  "status": "error",
+  "reason": "Voucher slip already used"
+}
+```
+
+**cURL Example:**
+```bash
+curl -X POST http://localhost:3000/api/v1/redeem \
+  -H "Content-Type: application/json" \
+  -d '{
+    "voucher": {
+      "payerAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+      "payeeAddress": "0x8ba1f109551bD432803012645Hac136c22C5e2",
+      "amount": 1000000000000000000,
+      "chainId": 1,
+      "cumulative": 5000000000000000000,
+      "counter": 42,
+      "expiry": 1735689600,
+      "slipId": "550e8400-e29b-41d4-a716-446655440000",
+      "contractAddress": "0x1234567890123456789012345678901234567890",
+      "signature": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12"
+    }
+  }'
+```
+
+### POST /api/v1/depositWebhook
+
+Records a deposit in the database. This endpoint is typically called by a webhook when a deposit transaction is confirmed on-chain.
+
+**Request Body:**
+```json
+{
+  "user": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+  "amount": "1000000000000000000",
+  "token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  "txHash": "0xabc123def456..."
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "message": "Deposit recorded"
+}
+```
+
+**cURL Example:**
+```bash
+curl -X POST http://localhost:3000/api/v1/depositWebhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+    "amount": "1000000000000000000",
+    "token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "txHash": "0xabc123def4567890123456789012345678901234567890123456789012345678"
+  }'
+```
+
+### GET /health
+
+Health check endpoint.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "message": "Hub server is running"
+}
+```
+
+**cURL Example:**
+```bash
+curl http://localhost:3000/health
+```
+
+## Testing
+
+Run tests with Jest:
+
+```bash
+npm test
+```
+
+Tests cover:
+- Valid signature verification
+- Expired voucher rejection
+- Duplicate slip rejection (simulating two redeem calls)
+- Schema validation
+
+## Environment Variables
+
+### Required
+
+- `RPC_URL` - Ethereum RPC endpoint URL (e.g., Alchemy, Infura)
+- `HUB_PRIVATE_KEY` - Private key for signing transactions (without 0x prefix)
+- `VAULT_CONTRACT_ADDRESS` - Address of the deployed Vault contract
+
+### Optional
+
+- `PORT` - Server port (default: 3000)
+- `REDEEM_ON_CHAIN` - Set to "true" to enable on-chain redemption (default: false)
+- `NODE_ENV` - Node environment (development/production)
+
+## Database
+
+The in-memory database persists data to `data/db.json`. This file is automatically created on first use and stores:
+- Used slip IDs (to prevent double-spending)
+- Deposit records (user, amount, token, txHash, timestamp)
+
+## Security Notes
+
+- Never commit `.env` file to version control
+- Keep `HUB_PRIVATE_KEY` secure and never expose it
+- Use environment-specific RPC URLs
+- Consider using a hardware wallet or secure key management service in production
+
+## Development
 
 ```bash
 # Start development server with hot reload
 npm run dev
 
-# Start production server
-npm start
-
-# Build TypeScript to JavaScript
+# Build TypeScript
 npm run build
 
-# Watch mode - rebuild on file changes
-npm run watch
-```
-
-### Testing
-
-```bash
-# Run all tests
+# Run tests
 npm test
-
-# Run tests in watch mode
-npm run test:watch
-
-# Run tests with coverage
-npm run test:coverage
-
-# Run tests in verbose mode
-npm run test:verbose
-```
-
-### Code Quality
-
-```bash
-# Run ESLint
-npm run lint
-
-# Fix ESLint issues automatically
-npm run lint:fix
-
-# Run TypeScript type checking
-npm run type-check
-
-# Format code with Prettier
-npm run format
-```
-
-### Production
-
-```bash
-# Build for production
-npm run build
-
-# Start production server
-npm start
-
-# Start with PM2 (if configured)
-npm run start:pm2
-```
-
-## Project Structure
-
-```
-hub-server/
-├── src/
-│   ├── controllers/      # Request handlers
-│   ├── services/         # Business logic
-│   ├── models/           # Data models
-│   ├── routes/           # API routes
-│   ├── middleware/       # Express middleware
-│   ├── utils/            # Utility functions
-│   ├── types/            # TypeScript type definitions
-│   └── index.ts          # Entry point
-├── tests/                # Test files
-├── dist/                 # Compiled JavaScript (generated)
-├── package.json
-├── tsconfig.json
-└── .env.example
-```
-
-## Environment Variables
-
-Create a `.env` file with the following variables:
-
-```env
-# Server Configuration
-PORT=3000
-NODE_ENV=development
-
-# Database (if applicable)
-DATABASE_URL=your_database_url
-
-# Blockchain Configuration
-RPC_URL=your_rpc_url
-CONTRACT_ADDRESS=your_contract_address
-PRIVATE_KEY=your_private_key
-
-# API Keys
-API_KEY=your_api_key
-```
-
-## API Endpoints
-
-[Document your API endpoints here]
-
-Example:
-- `GET /api/health` - Health check endpoint
-- `POST /api/users` - Create a new user
-
-## Running the Server
-
-### Development Mode
-
-```bash
-npm run dev
 ```
 
 The server will start on `http://localhost:3000` (or the port specified in `.env`).
-
-### Production Mode
-
-```bash
-npm run build
-npm start
-```
-
-## Testing
-
-Tests are written using [Jest/Mocha/Vitest - specify your test framework].
-
-```bash
-# Run all tests
-npm test
-
-# Run specific test file
-npm test -- path/to/test/file.test.ts
-```
-
-## Troubleshooting
-
-### Port Already in Use
-```bash
-# Find process using port 3000
-lsof -ti:3000
-
-# Kill the process
-kill -9 $(lsof -ti:3000)
-```
-
-### TypeScript Errors
-- Ensure all dependencies are installed: `npm install`
-- Check `tsconfig.json` configuration
-- Run type checking: `npm run type-check`
-
-### Module Not Found
-- Delete `node_modules` and `package-lock.json`
-- Run `npm install` again
-
-## Development Notes
-
-- Uses Express.js for routing and middleware
-- TypeScript for type safety
-- Hot reload enabled in development mode
-- CORS enabled for mobile app communication
-

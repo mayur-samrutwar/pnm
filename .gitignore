@@ -38,3 +38,7 @@ coverage.json
 # TypeScript
 *.tsbuildinfo
 
+# Hub database
+hub/data/*.json
+!hub/data/.gitkeep
+
