@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.com/voucher-schema.json",
+  "title": "Voucher Schema",
+  "description": "Schema for payment vouchers used in the PNM system",
+  "type": "object",
+  "required": [
+    "payerAddress",
+    "payeeAddress",
+    "amount",
+    "chainId",
+    "cumulative",
+    "counter",
+    "expiry",
+    "slipId",
+    "contractAddress",
+    "signature"
+  ],
+  "properties": {
+    "payerAddress": {
+      "type": "string",
+      "description": "Ethereum address of the payer in hexadecimal format",
+      "pattern": "^0x[a-fA-F0-9]{40}$"
+    },
+    "payeeAddress": {
+      "type": "string",
+      "description": "Ethereum address of the payee in hexadecimal format",
+      "pattern": "^0x[a-fA-F0-9]{40}$"
+    },
+    "amount": {
+      "type": "integer",
+      "description": "Payment amount in smallest token unit (wei for ETH)",
+      "minimum": 0
+    },
+    "chainId": {
+      "type": "integer",
+      "description": "Blockchain network chain ID",
+      "minimum": 1
+    },
+    "cumulative": {
+      "type": "integer",
+      "description": "Cumulative amount spent in smallest token unit",
+      "minimum": 0
+    },
+    "counter": {
+      "type": "integer",
+      "description": "Monotonic sequence number for voucher ordering",
+      "minimum": 0
+    },
+    "expiry": {
+      "type": "integer",
+      "description": "Unix timestamp when the voucher expires",
+      "minimum": 0
+    },
+    "slipId": {
+      "type": "string",
+      "description": "Unique identifier for the voucher slip (UUID format)",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "contractAddress": {
+      "type": "string",
+      "description": "Vault contract address in hexadecimal format",
+      "pattern": "^0x[a-fA-F0-9]{40}$"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Optional metadata object for additional voucher information",
+      "additionalProperties": true
+    },
+    "signature": {
+      "type": "string",
+      "description": "Cryptographic signature of the voucher in hexadecimal format",
+      "pattern": "^0x[a-fA-F0-9]+$"
+    }
+  },
+  "additionalProperties": false
+}
+
