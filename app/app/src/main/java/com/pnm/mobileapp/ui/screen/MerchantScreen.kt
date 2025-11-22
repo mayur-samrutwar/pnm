@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -19,8 +20,11 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.launch
 import com.pnm.mobileapp.data.model.Slip
+import com.pnm.mobileapp.data.model.SlipStatus
 import com.pnm.mobileapp.ui.viewmodel.MerchantViewModel
 import com.pnm.mobileapp.util.QRCodeUtils
+import com.pnm.mobileapp.util.VoucherValidator
+import kotlinx.coroutines.flow.collectAsState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,15 +37,45 @@ fun MerchantScreen(
     var amount by remember { mutableStateOf("") }
     var scannedSlip by remember { mutableStateOf<Slip?>(null) }
     var isOnline by remember { mutableStateOf(false) }
+    var selectedSlips by remember { mutableStateOf<Set<Long>>(emptySet()) }
     val syncResponse by viewModel.syncResponse.collectAsState()
+    val pendingSlips by viewModel.pendingSlips.collectAsState(initial = emptyList())
 
     val barcodeLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         result.contents?.let { json ->
-            scannedSlip = QRCodeUtils.parseSlipFromQR(json)
-            scannedSlip?.let { slip ->
-                coroutineScope.launch {
-                    viewModel.saveSlip(slip)
+            coroutineScope.launch {
+                // Validate JSON schema
+                if (!VoucherValidator.validateSchema(json)) {
+                    Toast.makeText(context, "Invalid voucher JSON schema", Toast.LENGTH_SHORT).show()
+                    return@launch
                 }
+                
+                // Parse voucher
+                val voucher = VoucherValidator.parseVoucher(json)
+                if (voucher == null) {
+                    Toast.makeText(context, "Failed to parse voucher", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                
+                // Create Slip from Voucher
+                val slip = Slip(
+                    slipId = voucher.slipId,
+                    payer = voucher.payer,
+                    amount = voucher.amount,
+                    userAddress = voucher.payer,
+                    cumulative = voucher.cumulative,
+                    counter = voucher.counter,
+                    publicKey = voucher.publicKey,
+                    signature = voucher.signature,
+                    rawJson = json,
+                    timestamp = voucher.timestamp,
+                    status = SlipStatus.PENDING
+                )
+                
+                // Save to Room database
+                viewModel.saveSlip(slip)
+                scannedSlip = slip
+                Toast.makeText(context, "Voucher scanned and saved", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -116,9 +150,11 @@ fun MerchantScreen(
                 }
                 scannedSlip?.let { slip ->
                     Text("Scanned Slip:", style = MaterialTheme.typography.labelLarge)
+                    Text("Slip ID: ${slip.slipId}")
                     Text("Amount: ${slip.amount}")
-                    Text("Address: ${slip.userAddress}")
-                    Text("Signature: ${slip.signature.take(20)}...")
+                    Text("Payer: ${slip.payer}")
+                    Text("Cumulative: ${slip.cumulative}")
+                    Text("Counter: ${slip.counter}")
                 }
             }
         }
@@ -153,6 +189,62 @@ fun MerchantScreen(
                 }
                 syncResponse?.let {
                     Text(it, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+
+        // Pending Slips List
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("Pending Slips (${pendingSlips.size})", style = MaterialTheme.typography.headlineSmall)
+                
+                if (pendingSlips.isEmpty()) {
+                    Text("No pending slips", style = MaterialTheme.typography.bodyMedium)
+                } else {
+                    pendingSlips.forEach { slip ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("ID: ${slip.slipId.take(8)}...", style = MaterialTheme.typography.bodySmall)
+                                Text("Amount: ${slip.amount}", style = MaterialTheme.typography.bodyMedium)
+                                Text("Payer: ${slip.payer.take(10)}...", style = MaterialTheme.typography.bodySmall)
+                                Text("Status: ${slip.status}", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Checkbox(
+                                checked = selectedSlips.contains(slip.id),
+                                onCheckedChange = {
+                                    selectedSlips = if (it) {
+                                        selectedSlips + slip.id
+                                    } else {
+                                        selectedSlips - slip.id
+                                    }
+                                }
+                            )
+                        }
+                        HorizontalDivider()
+                    }
+                    
+                    Button(
+                        onClick = {
+                            val slipsToSync = pendingSlips.filter { selectedSlips.contains(it.id) }
+                            if (slipsToSync.isEmpty()) {
+                                Toast.makeText(context, "No slips selected", Toast.LENGTH_SHORT).show()
+                            } else {
+                                viewModel.syncSelectedSlips(slipsToSync, isOnline)
+                                selectedSlips = emptySet()
+                            }
+                        },
+                        enabled = selectedSlips.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Sync selected with Hub (${selectedSlips.size})")
+                    }
                 }
             }
         }

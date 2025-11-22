@@ -7,7 +7,7 @@ import com.pnm.mobileapp.data.model.Slip
 
 @Database(
     entities = [Slip::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

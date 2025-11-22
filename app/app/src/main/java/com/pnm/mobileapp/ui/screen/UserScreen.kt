@@ -16,17 +16,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.pnm.mobileapp.data.model.Slip
+import com.pnm.mobileapp.data.model.Voucher
 import com.pnm.mobileapp.ui.viewmodel.AppViewModel
 import com.pnm.mobileapp.util.Constants
+import com.pnm.mobileapp.util.QRCodeUtils
+import com.google.gson.Gson
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UserScreen(
     viewModel: AppViewModel,
-    onShowSlipDialog: (Slip) -> Unit
+    onShowSlipDialog: (Slip, String) -> Unit
 ) {
     val context = LocalContext.current
     val wallet by viewModel.wallet.collectAsState()
@@ -195,16 +199,43 @@ fun UserScreen(
                                         return@launch
                                     }
 
-                                    val voucherJson = """{"amount":"$amount","userAddress":"${w.address}","timestamp":${System.currentTimeMillis()}}"""
+                                    val cumulative = viewModel.getCumulative()
+                                    val counter = viewModel.counter.value
+                                    val slipId = UUID.randomUUID().toString()
+                                    val timestamp = System.currentTimeMillis()
+                                    
+                                    // Create voucher JSON
+                                    val voucher = Voucher(
+                                        slipId = slipId,
+                                        payer = w.address,
+                                        amount = amount,
+                                        cumulative = cumulative + amountLong,
+                                        counter = counter + 1,
+                                        publicKey = viewModel.getPublicKeyHex(),
+                                        signature = "",
+                                        timestamp = timestamp
+                                    )
+                                    
+                                    val voucherJson = Gson().toJson(voucher)
                                     val signature = viewModel.signAndIncrement(voucherJson, amountLong)
-                                    val publicKey = viewModel.getPublicKeyHex()
+                                    
+                                    // Update voucher with signature
+                                    val signedVoucher = voucher.copy(signature = signature)
+                                    val finalVoucherJson = Gson().toJson(signedVoucher)
+                                    
                                     val slip = Slip(
+                                        slipId = slipId,
+                                        payer = w.address,
                                         amount = amount,
                                         userAddress = w.address,
-                                        publicKey = publicKey,
-                                        signature = signature
+                                        cumulative = cumulative + amountLong,
+                                        counter = counter + 1,
+                                        publicKey = viewModel.getPublicKeyHex(),
+                                        signature = signature,
+                                        rawJson = finalVoucherJson,
+                                        timestamp = timestamp
                                     )
-                                    onShowSlipDialog(slip)
+                                    onShowSlipDialog(slip, finalVoucherJson)
                                 } catch (e: IllegalStateException) {
                                     Toast.makeText(context, e.message ?: "Offline limit exceeded", Toast.LENGTH_LONG).show()
                                 } catch (e: Exception) {

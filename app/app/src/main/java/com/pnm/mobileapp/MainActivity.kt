@@ -69,7 +69,7 @@ fun MainScreen(
 ) {
     val context = LocalContext.current
     var selectedRole by remember { mutableStateOf(UserRole.USER) }
-    var showSlipDialog by remember { mutableStateOf<Slip?>(null) }
+    var showSlipDialog by remember { mutableStateOf<Pair<Slip, String>?>(null) }
     val navController = rememberNavController()
     val appViewModel: AppViewModel = remember { AppViewModel(context) }
     val merchantViewModel = remember {
@@ -113,8 +113,8 @@ fun MainScreen(
                 composable("user") {
                     UserScreen(
                         viewModel = appViewModel,
-                        onShowSlipDialog = { slip ->
-                            showSlipDialog = slip
+                        onShowSlipDialog = { slip, voucherJson ->
+                            showSlipDialog = Pair(slip, voucherJson)
                         }
                     )
                 }
@@ -129,9 +129,10 @@ fun MainScreen(
                 }
             }
 
-            showSlipDialog?.let { slip ->
+            showSlipDialog?.let { (slip, voucherJson) ->
                 CreateSlipDialog(
                     slip = slip,
+                    voucherJson = voucherJson,
                     onDismiss = { showSlipDialog = null }
                 )
             }
