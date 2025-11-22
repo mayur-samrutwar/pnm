@@ -28,6 +28,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun ProfileScreen(viewModel: AppViewModel) {
     val wallet by viewModel.wallet.collectAsState()
+    val usdcBalance by viewModel.usdcBalance.collectAsState()
+    val isLoadingBalance by viewModel.isLoadingBalance.collectAsState()
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -35,6 +37,13 @@ fun ProfileScreen(viewModel: AppViewModel) {
     
     // Check if ETH address is placeholder (failed generation)
     val isEthAddressPlaceholder = wallet?.ethAddress?.startsWith("0x0000000000000000000000000000000000000000") == true
+
+    // Fetch USDC balance when screen is displayed
+    LaunchedEffect(wallet?.ethAddress) {
+        if (wallet?.ethAddress != null && !wallet!!.ethAddress.startsWith("0x0000")) {
+            viewModel.fetchUSDCBalance()
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -281,6 +290,72 @@ fun ProfileScreen(viewModel: AppViewModel) {
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Generate Ethereum Wallet")
+                        }
+                    }
+                }
+            }
+        }
+
+        // USDC Balance Card
+        if (!isEthAddressPlaceholder) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF10B981)
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "USDC Balance",
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    color = Color.White.copy(alpha = 0.9f),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            if (isLoadingBalance) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Text(
+                                    text = usdcBalance?.let { "$it USDC" } ?: "0.0 USDC",
+                                    style = MaterialTheme.typography.headlineSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        fontSize = 24.sp
+                                    )
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = {
+                                coroutineScope.launch {
+                                    viewModel.fetchUSDCBalance()
+                                    Toast.makeText(context, "Balance refreshed", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Refresh",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
                         }
                     }
                 }

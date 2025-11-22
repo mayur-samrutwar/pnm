@@ -53,6 +53,7 @@ fun HomeScreen(
     var remainingBalance by remember { mutableStateOf(0.0) }
     val vaultBalance by viewModel.vaultBalance.collectAsState()
     val isLoadingVaultBalance by viewModel.isLoadingVaultBalance.collectAsState()
+    val cumulative by viewModel.cumulative.collectAsState()
 
     // Refresh balances when screen is displayed
     LaunchedEffect(Unit) {
@@ -61,7 +62,7 @@ fun HomeScreen(
     }
     
     // Update remaining balance when vault balance or cumulative changes
-    LaunchedEffect(vaultBalance) {
+    LaunchedEffect(vaultBalance, cumulative) {
         remainingBalance = viewModel.getRemainingBalance().toDouble() / 1_000_000.0 // Convert to USDC
     }
     
@@ -320,13 +321,16 @@ fun HomeScreen(
                             wallet?.let { w ->
                                 CoroutineScope(Dispatchers.Main).launch {
                                     try {
-                                        val amountLong = amountInput.toLongOrNull()
-                                        if (amountLong == null) {
+                                        val amountDouble = amountInput.toDoubleOrNull()
+                                        if (amountDouble == null) {
                                             Toast.makeText(context, "Invalid amount", Toast.LENGTH_SHORT).show()
                                             return@launch
                                         }
 
-                                        if (!viewModel.canSign(amountLong)) {
+                                        // Convert USDC to micro USDC (6 decimals)
+                                        val amountInMicroUSDC = (amountDouble * 1_000_000).toLong()
+                                        
+                                        if (!viewModel.canSign(amountInMicroUSDC)) {
                                             Toast.makeText(context, "Offline limit exceeded", Toast.LENGTH_LONG).show()
                                             return@launch
                                         }
@@ -342,7 +346,7 @@ fun HomeScreen(
                                             slipId = slipId,
                                             payer = w.address,
                                             amount = amountInput,
-                                            cumulative = currentCumulative + amountLong,
+                                            cumulative = currentCumulative + amountInMicroUSDC,
                                             counter = currentCounter + 1,
                                             publicKey = publicKey,
                                             signature = "",
@@ -350,7 +354,7 @@ fun HomeScreen(
                                         )
                                         
                                         val voucherJson = Gson().toJson(voucher)
-                                        val signature = viewModel.signAndIncrement(voucherJson, amountLong)
+                                        val signature = viewModel.signAndIncrement(voucherJson, amountInMicroUSDC)
                                         
                                         val signedVoucher = voucher.copy(signature = signature)
                                         val signedVoucherJson = Gson().toJson(signedVoucher)
@@ -360,7 +364,7 @@ fun HomeScreen(
                                             payer = w.address,
                                             amount = amountInput,
                                             userAddress = w.address,
-                                            cumulative = currentCumulative + amountLong,
+                                            cumulative = currentCumulative + amountInMicroUSDC,
                                             counter = currentCounter + 1,
                                             publicKey = publicKey,
                                             signature = signature,
@@ -371,8 +375,7 @@ fun HomeScreen(
                                         showCreateSlipDialog = false
                                         amountInput = ""
                                         
-                                        // Refresh balance after creating slip
-                                        remainingBalance = viewModel.getRemainingBalance().toDouble() / 1_000_000.0
+                                        // Balance will automatically update via LaunchedEffect observing cumulative
                                         
                                         onShowSlipDialog(slip, signedVoucherJson)
                                     } catch (e: IllegalStateException) {

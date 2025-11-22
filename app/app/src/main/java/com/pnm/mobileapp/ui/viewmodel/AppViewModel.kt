@@ -81,8 +81,12 @@ class AppViewModel(
 
     init {
         viewModelScope.launch {
-            _cumulative.value = counterManager.getCumulative()
-            _counter.value = counterManager.getCounter()
+            // Load cumulative and counter from storage
+            val loadedCumulative = counterManager.getCumulative()
+            val loadedCounter = counterManager.getCounter()
+            _cumulative.value = loadedCumulative
+            _counter.value = loadedCounter
+            android.util.Log.d("AppViewModel", "Initialized: cumulative=$loadedCumulative, counter=$loadedCounter")
             // Try to load existing wallet from Keystore
             loadExistingWallet()
             // Fetch vault balance after wallet is loaded
@@ -209,9 +213,14 @@ class AppViewModel(
     }
 
     suspend fun getRemainingBalance(): Long {
+        // Always get fresh values from counter manager
         val limit = getOfflineLimit()
         val cumulative = counterManager.getCumulative()
-        return maxOf(0L, limit - cumulative)
+        // Update the StateFlow so UI observes the change
+        _cumulative.value = cumulative
+        val remaining = maxOf(0L, limit - cumulative)
+        android.util.Log.d("AppViewModel", "getRemainingBalance: limit=$limit (${limit / 1_000_000.0} USDC), cumulative=$cumulative (${cumulative / 1_000_000.0} USDC), remaining=$remaining (${remaining / 1_000_000.0} USDC)")
+        return remaining
     }
 
     /**
@@ -278,9 +287,14 @@ class AppViewModel(
         if (keyPair == null) {
             throw IllegalStateException("Wallet not generated")
         }
+        val oldCumulative = counterManager.getCumulative()
+        android.util.Log.d("AppViewModel", "signAndIncrement: before - cumulative=$oldCumulative (${oldCumulative / 1_000_000.0} USDC), amount=$amount (${amount / 1_000_000.0} USDC)")
         val signature = counterManager.signAndIncrement(voucherJson, amount, signer, keyPair!!)
-        _cumulative.value = counterManager.getCumulative()
-        _counter.value = counterManager.getCounter()
+        val newCumulative = counterManager.getCumulative()
+        val newCounter = counterManager.getCounter()
+        _cumulative.value = newCumulative
+        _counter.value = newCounter
+        android.util.Log.d("AppViewModel", "signAndIncrement: after - cumulative=$newCumulative (${newCumulative / 1_000_000.0} USDC), counter=$newCounter")
         return signature
     }
 
@@ -312,17 +326,36 @@ class AppViewModel(
     fun fetchUSDCBalance() {
         viewModelScope.launch {
             val wallet = _wallet.value
-            val ethAddress = wallet?.ethAddress
+            var ethAddress = wallet?.ethAddress
             
             if (ethAddress == null || ethAddress.startsWith("0x0000") || hubApiService == null) {
                 _usdcBalance.value = null
                 return@launch
             }
 
+            // If we have a private key, verify the address matches
+            val ethPrivateKey = ethPrivateKey
+            if (ethPrivateKey != null && wallet != null) {
+                try {
+                    val derivedAddress = ethereumDepositManager.deriveAddressFromPrivateKey(ethPrivateKey)
+                    if (derivedAddress.lowercase() != ethAddress?.lowercase()) {
+                        android.util.Log.w("AppViewModel", "Address mismatch in fetchUSDCBalance! Profile: $ethAddress, Derived: $derivedAddress. Using derived address.")
+                        ethAddress = derivedAddress
+                        // Update wallet with correct address
+                        _wallet.value = wallet.copy(ethAddress = derivedAddress)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("AppViewModel", "Error deriving address for balance fetch", e)
+                }
+            }
+
+            // Ensure we have a valid address before proceeding
+            val finalAddress = ethAddress ?: return@launch
+
             _isLoadingBalance.value = true
             try {
-                android.util.Log.d("AppViewModel", "Fetching USDC balance for address: $ethAddress")
-                val response = hubApiService.getBalance(ethAddress)
+                android.util.Log.d("AppViewModel", "Fetching USDC balance for address: $finalAddress")
+                val response = hubApiService.getBalance(finalAddress)
                 android.util.Log.d("AppViewModel", "Balance API response code: ${response.code()}")
                 if (response.isSuccessful && response.body() != null) {
                     val balanceResponse = response.body()!!
