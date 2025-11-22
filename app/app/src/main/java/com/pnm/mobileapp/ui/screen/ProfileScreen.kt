@@ -19,12 +19,15 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 import com.pnm.mobileapp.ui.viewmodel.AppViewModel
 
 @Composable
 fun ProfileScreen(viewModel: AppViewModel) {
     val wallet by viewModel.wallet.collectAsState()
     val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -78,7 +81,7 @@ fun ProfileScreen(viewModel: AppViewModel) {
             }
         }
 
-        // Wallet Address Card
+        // Device Wallet Address Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
@@ -92,10 +95,18 @@ fun ProfileScreen(viewModel: AppViewModel) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "Wallet Address",
-                    style = MaterialTheme.typography.labelMedium.copy(
+                    text = "Device Wallet Address",
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        color = Color(0xFF1E293B),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                )
+                Text(
+                    text = "For offline voucher signing",
+                    style = MaterialTheme.typography.labelSmall.copy(
                         color = Color(0xFF64748B),
-                        fontSize = 13.sp
+                        fontSize = 12.sp
                     )
                 )
                 Row(
@@ -105,9 +116,9 @@ fun ProfileScreen(viewModel: AppViewModel) {
                 ) {
                     Text(
                         text = wallet?.address ?: "Not generated",
-                        style = MaterialTheme.typography.bodyMedium.copy(
+                        style = MaterialTheme.typography.bodySmall.copy(
                             color = Color(0xFF1E293B),
-                            fontSize = 14.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Medium
                         ),
                         modifier = Modifier.weight(1f)
@@ -116,13 +127,102 @@ fun ProfileScreen(viewModel: AppViewModel) {
                         onClick = {
                             wallet?.address?.let {
                                 clipboardManager.setText(AnnotatedString(it))
+                                Toast.makeText(context, "Device address copied!", Toast.LENGTH_SHORT).show()
                             }
                         }
                     ) {
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
                             contentDescription = "Copy",
-                            tint = Color(0xFF6366F1)
+                            tint = Color(0xFF6366F1),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Ethereum Wallet Address Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = Color(0xFFEEF2FF)
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Ethereum Wallet Address",
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                color = Color(0xFF1E293B),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        )
+                        Text(
+                            text = "For deposits and transactions",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = Color(0xFF64748B),
+                                fontSize = 12.sp
+                            )
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .background(
+                                color = Color(0xFF6366F1),
+                                shape = CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "ETH",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = wallet?.ethAddress ?: "Not generated",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = Color(0xFF1E293B),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = {
+                            wallet?.ethAddress?.let {
+                                clipboardManager.setText(AnnotatedString(it))
+                                Toast.makeText(context, "Ethereum address copied!", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "Copy",
+                            tint = Color(0xFF6366F1),
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }

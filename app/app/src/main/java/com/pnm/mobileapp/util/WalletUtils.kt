@@ -16,7 +16,9 @@ object WalletUtils {
         val publicKey = keyPair.public as ECPublicKey
         val address = publicKeyToAddress(publicKey)
         
-        return Wallet(keyPair, address)
+        // Note: This utility doesn't generate ETH wallet
+        // For full wallet generation, use AppViewModel.generateWallet()
+        return Wallet(keyPair, address, "", null)
     }
     
     private fun publicKeyToAddress(publicKey: ECPublicKey): String {

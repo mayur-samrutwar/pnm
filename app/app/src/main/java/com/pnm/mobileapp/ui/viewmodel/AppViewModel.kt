@@ -5,6 +5,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pnm.mobileapp.crypto.CounterManager
+import com.pnm.mobileapp.crypto.EthereumWalletGenerator
 import com.pnm.mobileapp.crypto.Signer
 import com.pnm.mobileapp.data.model.Wallet
 import com.pnm.mobileapp.secure.BiometricAuthHelper
@@ -16,9 +17,11 @@ import java.security.KeyPair
 class AppViewModel(private val context: Context) : ViewModel() {
     private val signer = Signer(context)
     private val counterManager = CounterManager(context)
+    private val ethereumWalletGenerator = EthereumWalletGenerator()
     private val _wallet = MutableStateFlow<Wallet?>(null)
     val wallet: StateFlow<Wallet?> = _wallet
     private var keyPair: KeyPair? = null
+    private var ethPrivateKey: ByteArray? = null
 
     private val _cumulative = MutableStateFlow(0L)
     val cumulative: StateFlow<Long> = _cumulative
@@ -43,6 +46,7 @@ class AppViewModel(private val context: Context) : ViewModel() {
 
     /**
      * Load existing wallet from Android Keystore if it exists
+     * Note: Ethereum wallet is not persisted, so it will be regenerated
      */
     private suspend fun loadExistingWallet() {
         try {
@@ -51,7 +55,10 @@ class AppViewModel(private val context: Context) : ViewModel() {
             if (existingKeyPair != null) {
                 keyPair = existingKeyPair
                 val address = signer.deriveAddress(existingKeyPair)
-                _wallet.value = Wallet(existingKeyPair, address)
+                // Generate Ethereum wallet (not persisted, so regenerate)
+                val (ethPrivKey, ethAddress) = ethereumWalletGenerator.generateKeyPair()
+                ethPrivateKey = ethPrivKey
+                _wallet.value = Wallet(existingKeyPair, address, ethAddress, ethPrivKey)
             }
         } catch (e: Exception) {
             // No existing wallet found, user needs to generate one
@@ -74,9 +81,15 @@ class AppViewModel(private val context: Context) : ViewModel() {
                 }
             }
             
+            // Generate device wallet (P-256 for vouchers)
             keyPair = signer.generateKeyPair()
             val address = signer.deriveAddress(keyPair)
-            _wallet.value = Wallet(keyPair!!, address)
+            
+            // Generate Ethereum wallet (secp256k1 for deposits)
+            val (ethPrivKey, ethAddress) = ethereumWalletGenerator.generateKeyPair()
+            ethPrivateKey = ethPrivKey
+            
+            _wallet.value = Wallet(keyPair!!, address, ethAddress, ethPrivKey)
         }
     }
 
