@@ -19,9 +19,14 @@ import com.pnm.mobileapp.data.api.HubApiService
 import com.pnm.mobileapp.data.database.AppDatabase
 import com.pnm.mobileapp.data.model.Slip
 import com.pnm.mobileapp.ui.dialog.CreateSlipDialog
+import com.pnm.mobileapp.ui.component.BottomNavigationBar
 import com.pnm.mobileapp.ui.screen.GenerateWalletScreen
+import com.pnm.mobileapp.ui.screen.HistoryScreen
+import com.pnm.mobileapp.ui.screen.HomeScreen
 import com.pnm.mobileapp.ui.screen.HubScreen
 import com.pnm.mobileapp.ui.screen.MerchantScreen
+import com.pnm.mobileapp.ui.screen.ProfileScreen
+import com.pnm.mobileapp.ui.screen.SettingsScreen
 import com.pnm.mobileapp.ui.screen.UserScreen
 import com.pnm.mobileapp.ui.theme.MobileAppTheme
 import com.pnm.mobileapp.ui.viewmodel.AppViewModel
@@ -96,8 +101,11 @@ fun MainScreen(
     } else if (wallet == null) {
         "generate_wallet"
     } else {
-        "user"
+        "home"
     }
+
+    // Track current bottom nav route
+    var currentBottomNavRoute by remember { mutableStateOf("home") }
 
     NavHost(
         navController = navController,
@@ -117,127 +125,135 @@ fun MainScreen(
                 viewModel = appViewModel,
                 activity = activity,
                 onWalletGenerated = {
-                    navController.navigate("user") {
+                    navController.navigate("home") {
                         popUpTo("generate_wallet") { inclusive = true }
                     }
                 }
             )
         }
         
-        composable("user") {
-            Scaffold(
-                topBar = {
-                    TopAppBar(
-                        title = { Text("PNM") },
-                        actions = {
-                            RoleToggle(
-                                selectedRole = selectedRole,
-                                onRoleSelected = { role ->
-                                    selectedRole = role
-                                    when (role) {
-                                        UserRole.USER -> navController.navigate("user") {
-                                            popUpTo("user")
-                                            launchSingleTop = true
-                                        }
-                                        UserRole.MERCHANT -> navController.navigate("merchant") {
-                                            popUpTo("user")
-                                            launchSingleTop = true
-                                        }
-                                        UserRole.HUB -> navController.navigate("hub") {
-                                            popUpTo("user")
-                                            launchSingleTop = true
-                                        }
-                                    }
-                                }
-                            )
+        // Main screens with bottom navigation
+        composable("home") {
+            currentBottomNavRoute = "home"
+            MainContentScreen(
+                selectedRole = selectedRole,
+                viewModel = appViewModel,
+                merchantViewModel = merchantViewModel,
+                hubApiService = hubApiService,
+                onShowSlipDialog = { slip, voucherJson ->
+                    showSlipDialog = Pair(slip, voucherJson)
+                },
+                activity = activity,
+                currentRoute = currentBottomNavRoute,
+                onNavigate = { route ->
+                    currentBottomNavRoute = route
+                    navController.navigate(route) {
+                        popUpTo("home")
+                        launchSingleTop = true
+                    }
+                },
+                onPayClick = {
+                    // Pay button opens create slip flow
+                    // Navigate to home if not already there, then trigger pay
+                    if (currentBottomNavRoute != "home") {
+                        navController.navigate("home") {
+                            popUpTo("home")
+                            launchSingleTop = true
                         }
-                    )
+                    }
+                    // The pay action will be handled by HomeScreen
                 }
-            ) { paddingValues ->
-                Box(modifier = Modifier.padding(paddingValues)) {
-                    UserScreen(
-                        viewModel = appViewModel,
-                        onShowSlipDialog = { slip, voucherJson ->
-                            showSlipDialog = Pair(slip, voucherJson)
-                        },
-                        activity = activity
-                    )
+            )
+        }
+        
+        composable("profile") {
+            currentBottomNavRoute = "profile"
+            MainContentScreen(
+                selectedRole = selectedRole,
+                viewModel = appViewModel,
+                merchantViewModel = merchantViewModel,
+                hubApiService = hubApiService,
+                onShowSlipDialog = { slip, voucherJson ->
+                    showSlipDialog = Pair(slip, voucherJson)
+                },
+                activity = activity,
+                currentRoute = currentBottomNavRoute,
+                onNavigate = { route ->
+                    currentBottomNavRoute = route
+                    navController.navigate(route) {
+                        popUpTo("home")
+                        launchSingleTop = true
+                    }
+                },
+                onPayClick = {}
+            )
+        }
+        
+        composable("history") {
+            currentBottomNavRoute = "history"
+            MainContentScreen(
+                selectedRole = selectedRole,
+                viewModel = appViewModel,
+                merchantViewModel = merchantViewModel,
+                hubApiService = hubApiService,
+                onShowSlipDialog = { slip, voucherJson ->
+                    showSlipDialog = Pair(slip, voucherJson)
+                },
+                activity = activity,
+                currentRoute = currentBottomNavRoute,
+                onNavigate = { route ->
+                    currentBottomNavRoute = route
+                    navController.navigate(route) {
+                        popUpTo("home")
+                        launchSingleTop = true
+                    }
+                },
+                onPayClick = {}
+            )
+        }
+        
+        composable("settings") {
+            currentBottomNavRoute = "settings"
+            MainContentScreen(
+                selectedRole = selectedRole,
+                viewModel = appViewModel,
+                merchantViewModel = merchantViewModel,
+                hubApiService = hubApiService,
+                onShowSlipDialog = { slip, voucherJson ->
+                    showSlipDialog = Pair(slip, voucherJson)
+                },
+                activity = activity,
+                currentRoute = currentBottomNavRoute,
+                onNavigate = { route ->
+                    currentBottomNavRoute = route
+                    navController.navigate(route) {
+                        popUpTo("home")
+                        launchSingleTop = true
+                    }
+                },
+                onPayClick = {},
+                onRoleSelected = { role ->
+                    selectedRole = role
                 }
+            )
+        }
+        
+        // Legacy routes for backward compatibility
+        composable("user") {
+            navController.navigate("home") {
+                popUpTo("user") { inclusive = true }
             }
         }
         
         composable("merchant") {
-            Scaffold(
-                topBar = {
-                    TopAppBar(
-                        title = { Text("PNM") },
-                        actions = {
-                            RoleToggle(
-                                selectedRole = selectedRole,
-                                onRoleSelected = { role ->
-                                    selectedRole = role
-                                    when (role) {
-                                        UserRole.USER -> navController.navigate("user") {
-                                            popUpTo("merchant")
-                                            launchSingleTop = true
-                                        }
-                                        UserRole.MERCHANT -> navController.navigate("merchant") {
-                                            popUpTo("merchant")
-                                            launchSingleTop = true
-                                        }
-                                        UserRole.HUB -> navController.navigate("hub") {
-                                            popUpTo("merchant")
-                                            launchSingleTop = true
-                                        }
-                                    }
-                                }
-                            )
-                        }
-                    )
-                }
-            ) { paddingValues ->
-                Box(modifier = Modifier.padding(paddingValues)) {
-                    MerchantScreen(
-                        viewModel = merchantViewModel,
-                        onScanQR = { }
-                    )
-                }
+            navController.navigate("home") {
+                popUpTo("merchant") { inclusive = true }
             }
         }
         
         composable("hub") {
-            Scaffold(
-                topBar = {
-                    TopAppBar(
-                        title = { Text("PNM") },
-                        actions = {
-                            RoleToggle(
-                                selectedRole = selectedRole,
-                                onRoleSelected = { role ->
-                                    selectedRole = role
-                                    when (role) {
-                                        UserRole.USER -> navController.navigate("user") {
-                                            popUpTo("hub")
-                                            launchSingleTop = true
-                                        }
-                                        UserRole.MERCHANT -> navController.navigate("merchant") {
-                                            popUpTo("hub")
-                                            launchSingleTop = true
-                                        }
-                                        UserRole.HUB -> navController.navigate("hub") {
-                                            popUpTo("hub")
-                                            launchSingleTop = true
-                                        }
-                                    }
-                                }
-                            )
-                        }
-                    )
-                }
-            ) { paddingValues ->
-                Box(modifier = Modifier.padding(paddingValues)) {
-                    HubScreen(hubApiService = hubApiService)
-                }
+            navController.navigate("home") {
+                popUpTo("hub") { inclusive = true }
             }
         }
     }
@@ -251,30 +267,56 @@ fun MainScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RoleToggle(
+fun MainContentScreen(
     selectedRole: UserRole,
-    onRoleSelected: (UserRole) -> Unit
+    viewModel: AppViewModel,
+    merchantViewModel: MerchantViewModel,
+    hubApiService: HubApiService,
+    onShowSlipDialog: (Slip, String) -> Unit,
+    activity: FragmentActivity,
+    currentRoute: String,
+    onNavigate: (String) -> Unit,
+    onPayClick: () -> Unit,
+    onRoleSelected: ((UserRole) -> Unit)? = null
 ) {
-    Row(
-        modifier = Modifier.padding(horizontal = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        FilterChip(
-            selected = selectedRole == UserRole.USER,
-            onClick = { onRoleSelected(UserRole.USER) },
-            label = { Text("USER") }
-        )
-        FilterChip(
-            selected = selectedRole == UserRole.MERCHANT,
-            onClick = { onRoleSelected(UserRole.MERCHANT) },
-            label = { Text("MERCHANT") }
-        )
-        FilterChip(
-            selected = selectedRole == UserRole.HUB,
-            onClick = { onRoleSelected(UserRole.HUB) },
-            label = { Text("HUB") }
-        )
+    Box(modifier = Modifier.fillMaxSize()) {
+        when (currentRoute) {
+            "home" -> {
+                when (selectedRole) {
+                    UserRole.USER -> HomeScreen(
+                        viewModel = viewModel,
+                        onShowSlipDialog = onShowSlipDialog,
+                        activity = activity
+                    )
+                    UserRole.MERCHANT -> MerchantScreen(
+                        viewModel = merchantViewModel,
+                        onScanQR = { }
+                    )
+                    UserRole.HUB -> HubScreen(hubApiService = hubApiService)
+                }
+            }
+            "history" -> HistoryScreen(viewModel = viewModel)
+            "profile" -> ProfileScreen(viewModel = viewModel)
+            "settings" -> SettingsScreen(
+                currentRole = selectedRole,
+                onRoleSelected = { role ->
+                    onRoleSelected?.invoke(role)
+                }
+            )
+        }
+        
+        // Floating bottom navigation
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+        ) {
+            BottomNavigationBar(
+                currentRoute = currentRoute,
+                onNavigate = onNavigate,
+                onPayClick = onPayClick
+            )
+        }
     }
 }
