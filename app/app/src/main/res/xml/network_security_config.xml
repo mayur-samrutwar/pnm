@@ -3,7 +3,8 @@
     <!-- Allow cleartext (HTTP) traffic for development -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">10.0.2.2</domain> <!-- Emulator localhost -->
-        <domain includeSubdomains="true">10.0.5.171</domain> <!-- Your computer's IP for physical device -->
+        <domain includeSubdomains="true">10.140.159.96</domain> <!-- Your computer's IP for physical device -->
+        <domain includeSubdomains="true">10.0.5.171</domain> <!-- Previous IP (kept for compatibility) -->
         <domain includeSubdomains="true">localhost</domain>
         <domain includeSubdomains="true">127.0.0.1</domain>
     </domain-config>

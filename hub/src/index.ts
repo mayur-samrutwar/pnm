@@ -27,8 +27,9 @@ async function startServer() {
   await db.initialize();
   console.log('Database initialized');
 
-  app.listen(PORT, () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is running on port ${PORT}`);
+    console.log(`Server listening on 0.0.0.0:${PORT} (accessible from network)`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`Redeem on-chain: ${process.env.REDEEM_ON_CHAIN === 'true' ? 'enabled' : 'disabled'}`);
   });
