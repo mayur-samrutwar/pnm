@@ -20,9 +20,23 @@ function getVaultClient(): VaultClient | null {
   const privateKey = process.env.HUB_PRIVATE_KEY;
   const contractAddress = process.env.VAULT_CONTRACT_ADDRESS;
 
+  // Validate that private key is a real key, not a placeholder
   if (rpcUrl && privateKey && contractAddress) {
-    vaultClient = new VaultClient(rpcUrl, privateKey, contractAddress, VAULT_ABI);
-    return vaultClient;
+    // Check if private key is a placeholder
+    if (privateKey.includes('your_hub_private_key') || 
+        privateKey.includes('placeholder') ||
+        privateKey.length < 64) {
+      console.warn('HUB_PRIVATE_KEY is not configured properly. VaultClient will not be initialized.');
+      return null;
+    }
+
+    try {
+      vaultClient = new VaultClient(rpcUrl, privateKey, contractAddress, VAULT_ABI);
+      return vaultClient;
+    } catch (error) {
+      console.error('Failed to initialize VaultClient:', error);
+      return null;
+    }
   }
 
   return null;
@@ -322,40 +336,13 @@ router.get('/balance/:address', async (req: Request, res: Response) => {
       });
     }
 
-    // Get balance using VaultClient
-    const client = getVaultClient();
-    if (!client) {
-      // Create a temporary provider for balance query
-      const { ethers } = require('ethers');
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const erc20Abi = ['function balanceOf(address owner) external view returns (uint256)', 'function decimals() external view returns (uint8)'];
-      const tokenContract = new ethers.Contract(tokenAddress, erc20Abi, provider);
-      
-      const balance = await tokenContract.balanceOf(address);
-      const decimals = await tokenContract.decimals();
-      
-      // Convert BigInt to string for JSON serialization
-      const balanceStr = balance.toString();
-      const decimalsNum = Number(decimals);
-      const balanceFormatted = ethers.formatUnits(balance, decimalsNum);
-      
-      return res.status(200).json({
-        status: 'success',
-        balance: balanceStr,
-        balanceFormatted: balanceFormatted,
-        decimals: decimalsNum,
-        tokenAddress: tokenAddress,
-      });
-    }
-
-    // Use VaultClient if available
-    const balance = await client.getTokenBalance(address, tokenAddress);
-    
-    // Get decimals (assuming 6 for USDC, but we should query it)
+    // Query token balance directly (no need for VaultClient)
     const { ethers } = require('ethers');
     const provider = new ethers.JsonRpcProvider(rpcUrl);
-    const erc20Abi = ['function decimals() external view returns (uint8)'];
+    const erc20Abi = ['function balanceOf(address owner) external view returns (uint256)', 'function decimals() external view returns (uint8)'];
     const tokenContract = new ethers.Contract(tokenAddress, erc20Abi, provider);
+    
+    const balance = await tokenContract.balanceOf(address);
     const decimals = await tokenContract.decimals();
     
     // Convert BigInt to string for JSON serialization
