@@ -80,7 +80,7 @@ fun MainScreen(
     var selectedRole by remember { mutableStateOf(UserRole.USER) }
     var showSlipDialog by remember { mutableStateOf<Pair<Slip, String>?>(null) }
     val navController = rememberNavController()
-    val appViewModel: AppViewModel = remember { AppViewModel(context) }
+    val appViewModel: AppViewModel = remember { AppViewModel(context, hubApiService) }
     val merchantViewModel = remember {
         MerchantViewModel(database.pendingSlipDao(), hubApiService)
     }

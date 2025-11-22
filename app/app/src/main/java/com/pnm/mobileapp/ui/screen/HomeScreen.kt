@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Wallet
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -40,6 +41,8 @@ fun HomeScreen(
 ) {
     val wallet by viewModel.wallet.collectAsState()
     val showSoftwareFallbackWarning by viewModel.showSoftwareFallbackWarning.collectAsState()
+    val usdcBalance by viewModel.usdcBalance.collectAsState()
+    val isLoadingBalance by viewModel.isLoadingBalance.collectAsState()
     var showCreateSlipDialog by remember { mutableStateOf(false) }
     var showDepositDialog by remember { mutableStateOf(false) }
     var amountInput by remember { mutableStateOf("") }
@@ -48,10 +51,18 @@ fun HomeScreen(
     var offlineLimit by remember { mutableStateOf(0L) }
     var remainingBalance by remember { mutableStateOf(0L) }
 
-    // Refresh offline balance when screen is displayed
+    // Refresh balances when screen is displayed
     LaunchedEffect(Unit) {
         offlineLimit = viewModel.getOfflineLimit()
         remainingBalance = viewModel.getRemainingBalance()
+        viewModel.fetchUSDCBalance()
+    }
+    
+    // Refresh USDC balance when wallet changes
+    LaunchedEffect(wallet?.ethAddress) {
+        if (wallet?.ethAddress != null && !wallet!!.ethAddress.startsWith("0x0000")) {
+            viewModel.fetchUSDCBalance()
+        }
     }
 
     Column(
@@ -67,73 +78,121 @@ fun HomeScreen(
             SoftwareFallbackBanner()
         }
 
-        // Offline Balance Card
-        Card(
+        // Balance Cards - Side by Side
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = Color(0xFF6366F1)
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+            // USDC Balance Card
+            Card(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF10B981)
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Column {
-                        Text(
-                            text = "Offline Balance",
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                color = Color.White.copy(alpha = 0.8f),
-                                fontSize = 14.sp
-                            )
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "$remainingBalance",
-                            style = MaterialTheme.typography.headlineLarge.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White,
-                                fontSize = 36.sp
-                            )
-                        )
-                        if (offlineLimit > 0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "of $offlineLimit available",
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    color = Color.White.copy(alpha = 0.7f),
-                                    fontSize = 14.sp
+                                text = "USDC",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    color = Color.White.copy(alpha = 0.8f),
+                                    fontSize = 12.sp
                                 )
                             )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            if (isLoadingBalance) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Text(
+                                    text = usdcBalance?.let { "$it" } ?: "0.0",
+                                    style = MaterialTheme.typography.headlineMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        fontSize = 24.sp
+                                    )
+                                )
+                            }
                         }
+                        Icon(
+                            imageVector = Icons.Default.AccountBalanceWallet,
+                            contentDescription = "USDC",
+                            modifier = Modifier.size(32.dp),
+                            tint = Color.White
+                        )
                     }
-                    Icon(
-                        imageVector = Icons.Default.Wallet,
-                        contentDescription = "Wallet",
-                        modifier = Modifier.size(48.dp),
-                        tint = Color.White
-                    )
                 }
-                
-                // Progress bar
-                if (offlineLimit > 0) {
-                    val progress = (remainingBalance.toFloat() / offlineLimit.toFloat()).coerceIn(0f, 1f)
-                    LinearProgressIndicator(
-                        progress = progress,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp)),
-                        color = Color.White,
-                        trackColor = Color.White.copy(alpha = 0.3f)
-                    )
+            }
+
+            // Offline Balance Card
+            Card(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF6366F1)
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Offline",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    color = Color.White.copy(alpha = 0.8f),
+                                    fontSize = 12.sp
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "$remainingBalance",
+                                style = MaterialTheme.typography.headlineMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    fontSize = 24.sp
+                                )
+                            )
+                            if (offlineLimit > 0) {
+                                Text(
+                                    text = "of $offlineLimit",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = Color.White.copy(alpha = 0.7f),
+                                        fontSize = 11.sp
+                                    )
+                                )
+                            }
+                        }
+                        Icon(
+                            imageVector = Icons.Default.Wallet,
+                            contentDescription = "Wallet",
+                            modifier = Modifier.size(32.dp),
+                            tint = Color.White
+                        )
+                    }
                 }
             }
         }

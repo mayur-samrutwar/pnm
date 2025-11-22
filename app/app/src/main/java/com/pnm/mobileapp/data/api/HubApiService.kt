@@ -8,7 +8,9 @@ import com.pnm.mobileapp.refill.RefillFlow
 import com.pnm.mobileapp.util.Constants
 import retrofit2.Response
 import retrofit2.http.Body
+import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.Path
 
 interface HubApiService {
     @POST("/api/v1/validate")
@@ -19,6 +21,9 @@ interface HubApiService {
 
     @POST("/api/v1/requestRefill")
     suspend fun requestRefill(@Body request: RefillFlow.RefillRequest): Response<RefillResponse>
+
+    @GET("/api/v1/balance/{address}")
+    suspend fun getBalance(@Path("address") address: String): Response<BalanceResponse>
 }
 
 /**
@@ -121,5 +126,18 @@ data class RefillResponse(
     val success: Boolean,
     val message: String,
     val refillToken: String? = null
+)
+
+data class BalanceResponse(
+    @SerializedName("status")
+    val status: String,
+    @SerializedName("balance")
+    val balance: String,
+    @SerializedName("balanceFormatted")
+    val balanceFormatted: String,
+    @SerializedName("decimals")
+    val decimals: Int,
+    @SerializedName("tokenAddress")
+    val tokenAddress: String? = null
 )
 

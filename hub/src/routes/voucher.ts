@@ -220,5 +220,97 @@ router.post('/depositWebhook', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /api/v1/balance/:address
+ * Get USDC balance for an Ethereum address
+ */
+router.get('/balance/:address', async (req: Request, res: Response) => {
+  try {
+    const { address } = req.params;
+
+    // Validate address format
+    const addressRegex = /^0x[a-fA-F0-9]{40}$/;
+    if (!addressRegex.test(address)) {
+      return res.status(400).json({
+        status: 'error',
+        reason: 'Invalid address format',
+      });
+    }
+
+    // Get token address from env (Mock USDC or real USDC)
+    const tokenAddress = process.env.MOCK_ERC20_ADDRESS || process.env.USDC_ADDRESS;
+    if (!tokenAddress) {
+      return res.status(500).json({
+        status: 'error',
+        reason: 'Token address not configured',
+      });
+    }
+
+    // Get RPC URL
+    const rpcUrl = process.env.RPC_URL;
+    if (!rpcUrl) {
+      return res.status(500).json({
+        status: 'error',
+        reason: 'RPC URL not configured',
+      });
+    }
+
+    // Get balance using VaultClient
+    const client = getVaultClient();
+    if (!client) {
+      // Create a temporary provider for balance query
+      const { ethers } = require('ethers');
+      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      const erc20Abi = ['function balanceOf(address owner) external view returns (uint256)', 'function decimals() external view returns (uint8)'];
+      const tokenContract = new ethers.Contract(tokenAddress, erc20Abi, provider);
+      
+      const balance = await tokenContract.balanceOf(address);
+      const decimals = await tokenContract.decimals();
+      
+      // Convert BigInt to string for JSON serialization
+      const balanceStr = balance.toString();
+      const decimalsNum = Number(decimals);
+      const balanceFormatted = ethers.formatUnits(balance, decimalsNum);
+      
+      return res.status(200).json({
+        status: 'success',
+        balance: balanceStr,
+        balanceFormatted: balanceFormatted,
+        decimals: decimalsNum,
+        tokenAddress: tokenAddress,
+      });
+    }
+
+    // Use VaultClient if available
+    const balance = await client.getTokenBalance(address, tokenAddress);
+    
+    // Get decimals (assuming 6 for USDC, but we should query it)
+    const { ethers } = require('ethers');
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const erc20Abi = ['function decimals() external view returns (uint8)'];
+    const tokenContract = new ethers.Contract(tokenAddress, erc20Abi, provider);
+    const decimals = await tokenContract.decimals();
+    
+    // Convert BigInt to string for JSON serialization
+    const balanceStr = balance.toString();
+    const decimalsNum = Number(decimals);
+    const balanceFormatted = ethers.formatUnits(balance, decimalsNum);
+    
+    return res.status(200).json({
+      status: 'success',
+      balance: balanceStr,
+      balanceFormatted: balanceFormatted,
+      decimals: decimalsNum,
+      tokenAddress: tokenAddress,
+    });
+  } catch (error) {
+    console.error('Error getting balance:', error);
+    return res.status(500).json({
+      status: 'error',
+      reason: 'Internal server error',
+    });
+  }
+});
+
 export default router;
 
