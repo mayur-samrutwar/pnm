@@ -15,7 +15,8 @@ import kotlinx.coroutines.launch
 
 class MerchantViewModel(
     private val pendingSlipDao: PendingSlipDao,
-    private val hubApiService: HubApiService
+    private val hubApiService: HubApiService,
+    private val merchantEthAddress: String? = null // Merchant's Ethereum address for receiving payments
 ) : ViewModel() {
     private val _syncResponse = MutableStateFlow<String?>(null)
     val syncResponse: StateFlow<String?> = _syncResponse
@@ -26,11 +27,19 @@ class MerchantViewModel(
         pendingSlipDao.insertSlip(slip)
     }
 
-    fun syncWithHub(slip: Slip, isOnline: Boolean) {
+    fun syncWithHub(slip: Slip, isOnline: Boolean, merchantAddress: String? = null) {
         viewModelScope.launch {
             try {
-                // Convert Slip to HubVoucher and wrap in VoucherRequest
-                val hubVoucher = slip.toHubVoucher() // Merchant address can be passed if needed
+                // Use provided merchant address, or fallback to stored one, or use device address
+                val payeeAddress = merchantAddress ?: merchantEthAddress ?: slip.userAddress
+                
+                if (payeeAddress == "0x0000000000000000000000000000000000000000" || payeeAddress.isEmpty()) {
+                    _syncResponse.value = "Error: Merchant address not configured. Please set your Ethereum address in settings."
+                    return@launch
+                }
+                
+                // Convert Slip to HubVoucher with merchant's address as payee
+                val hubVoucher = slip.toHubVoucher(payeeAddress)
                 val request = VoucherRequest(voucher = hubVoucher)
                 
                 if (isOnline) {
@@ -62,10 +71,10 @@ class MerchantViewModel(
         }
     }
 
-    fun syncSelectedSlips(slips: List<Slip>, isOnline: Boolean) {
+    fun syncSelectedSlips(slips: List<Slip>, isOnline: Boolean, merchantAddress: String? = null) {
         viewModelScope.launch {
             slips.forEach { slip ->
-                syncWithHub(slip, isOnline)
+                syncWithHub(slip, isOnline, merchantAddress)
             }
         }
     }

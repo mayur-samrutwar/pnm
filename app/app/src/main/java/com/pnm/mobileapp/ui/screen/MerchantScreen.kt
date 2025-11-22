@@ -30,6 +30,7 @@ import com.pnm.mobileapp.util.VoucherValidator
 @Composable
 fun MerchantScreen(
     viewModel: MerchantViewModel,
+    merchantEthAddress: String? = null, // Merchant's Ethereum address for receiving payments
     @Suppress("UNUSED_PARAMETER") onScanQR: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -166,6 +167,29 @@ fun MerchantScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text("Sync with Hub", style = MaterialTheme.typography.headlineSmall)
+                
+                // Warning if merchant address not configured
+                if (merchantEthAddress == null || merchantEthAddress.startsWith("0x0000") || merchantEthAddress.isEmpty()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        )
+                    ) {
+                        Text(
+                            text = "⚠️ Warning: Merchant Ethereum address not configured. Payments will not be received. Please generate a wallet first.",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(12.dp),
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                } else {
+                    Text(
+                        text = "Receiving to: ${merchantEthAddress.take(10)}...${merchantEthAddress.takeLast(6)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -179,7 +203,7 @@ fun MerchantScreen(
                 Button(
                     onClick = {
                         scannedSlip?.let {
-                            viewModel.syncWithHub(it, isOnline)
+                            viewModel.syncWithHub(it, isOnline, merchantEthAddress)
                         }
                     },
                     enabled = scannedSlip != null,
@@ -236,7 +260,7 @@ fun MerchantScreen(
                             if (slipsToSync.isEmpty()) {
                                 Toast.makeText(context, "No slips selected", Toast.LENGTH_SHORT).show()
                             } else {
-                                viewModel.syncSelectedSlips(slipsToSync, isOnline)
+                                viewModel.syncSelectedSlips(slipsToSync, isOnline, merchantEthAddress)
                                 selectedSlips = emptySet()
                             }
                         },

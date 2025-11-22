@@ -82,7 +82,9 @@ fun MainScreen(
     val navController = rememberNavController()
     val appViewModel: AppViewModel = remember { AppViewModel(context, hubApiService) }
     val merchantViewModel = remember {
-        MerchantViewModel(database.pendingSlipDao(), hubApiService)
+        // Pass merchant's Ethereum address from their wallet
+        val merchantEthAddress = appViewModel.wallet.value?.ethAddress
+        MerchantViewModel(database.pendingSlipDao(), hubApiService, merchantEthAddress)
     }
     
     // Check if wallet exists
@@ -289,10 +291,14 @@ fun MainContentScreen(
                         onShowSlipDialog = onShowSlipDialog,
                         activity = activity
                     )
-                    UserRole.MERCHANT -> MerchantScreen(
-                        viewModel = merchantViewModel,
-                        onScanQR = { }
-                    )
+                    UserRole.MERCHANT -> {
+                        val wallet by appViewModel.wallet.collectAsState()
+                        MerchantScreen(
+                            viewModel = merchantViewModel,
+                            merchantEthAddress = wallet?.ethAddress,
+                            onScanQR = { }
+                        )
+                    }
                     UserRole.HUB -> HubScreen(hubApiService = hubApiService)
                 }
             }
