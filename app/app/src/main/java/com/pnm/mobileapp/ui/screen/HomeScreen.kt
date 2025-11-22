@@ -3,12 +3,15 @@ package com.pnm.mobileapp.ui.screen
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.Wallet
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,17 +39,19 @@ fun HomeScreen(
     activity: androidx.fragment.app.FragmentActivity?
 ) {
     val wallet by viewModel.wallet.collectAsState()
-    val cumulative by viewModel.cumulative.collectAsState()
-    val counter by viewModel.counter.collectAsState()
     val showSoftwareFallbackWarning by viewModel.showSoftwareFallbackWarning.collectAsState()
     var showCreateSlipDialog by remember { mutableStateOf(false) }
     var showDepositDialog by remember { mutableStateOf(false) }
     var amountInput by remember { mutableStateOf("") }
     val context = LocalContext.current
+    
+    var offlineLimit by remember { mutableStateOf(0L) }
+    var remainingBalance by remember { mutableStateOf(0L) }
 
-    // Refresh cumulative and counter when screen is displayed
+    // Refresh offline balance when screen is displayed
     LaunchedEffect(Unit) {
-        viewModel.getCumulative()
+        offlineLimit = viewModel.getOfflineLimit()
+        remainingBalance = viewModel.getRemainingBalance()
     }
 
     Column(
@@ -62,69 +67,72 @@ fun HomeScreen(
             SoftwareFallbackBanner()
         }
 
-        // Stats Cards
-        Row(
+        // Offline Balance Card
+        Card(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = Color(0xFF6366F1)
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
         ) {
-            // Cumulative Card
-            Card(
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.White
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Cumulative",
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            color = Color(0xFF64748B),
-                            fontSize = 13.sp
+                    Column {
+                        Text(
+                            text = "Offline Balance",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                color = Color.White.copy(alpha = 0.8f),
+                                fontSize = 14.sp
+                            )
                         )
-                    )
-                    Text(
-                        text = "$cumulative",
-                        style = MaterialTheme.typography.headlineSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF1E293B),
-                            fontSize = 24.sp
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "$remainingBalance",
+                            style = MaterialTheme.typography.headlineLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                fontSize = 36.sp
+                            )
                         )
+                        if (offlineLimit > 0) {
+                            Text(
+                                text = "of $offlineLimit available",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    fontSize = 14.sp
+                                )
+                            )
+                        }
+                    }
+                    Icon(
+                        imageVector = Icons.Default.Wallet,
+                        contentDescription = "Wallet",
+                        modifier = Modifier.size(48.dp),
+                        tint = Color.White
                     )
                 }
-            }
-
-            // Counter Card
-            Card(
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.White
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "Counter",
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            color = Color(0xFF64748B),
-                            fontSize = 13.sp
-                        )
-                    )
-                    Text(
-                        text = "$counter",
-                        style = MaterialTheme.typography.headlineSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF1E293B),
-                            fontSize = 24.sp
-                        )
+                
+                // Progress bar
+                if (offlineLimit > 0) {
+                    val progress = (remainingBalance.toFloat() / offlineLimit.toFloat()).coerceIn(0f, 1f)
+                    LinearProgressIndicator(
+                        progress = progress,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp)),
+                        color = Color.White,
+                        trackColor = Color.White.copy(alpha = 0.3f)
                     )
                 }
             }
@@ -259,6 +267,9 @@ fun HomeScreen(
 
                                         val currentCumulative = viewModel.getCumulative()
                                         val currentCounter = viewModel.counter.value
+                                        
+                                        // Refresh balance after creating slip
+                                        remainingBalance = viewModel.getRemainingBalance()
                                         val slipId = UUID.randomUUID().toString()
                                         val timestamp = System.currentTimeMillis()
                                         val publicKey = viewModel.getPublicKeyHex()
@@ -295,6 +306,10 @@ fun HomeScreen(
                                         
                                         showCreateSlipDialog = false
                                         amountInput = ""
+                                        
+                                        // Refresh balance after creating slip
+                                        remainingBalance = viewModel.getRemainingBalance()
+                                        
                                         onShowSlipDialog(slip, signedVoucherJson)
                                     } catch (e: IllegalStateException) {
                                         Toast.makeText(context, e.message ?: "Offline limit exceeded", Toast.LENGTH_LONG).show()

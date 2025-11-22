@@ -94,6 +94,16 @@ class AppViewModel(private val context: Context) : ViewModel() {
         return value
     }
 
+    suspend fun getOfflineLimit(): Long {
+        return counterManager.getLimit()
+    }
+
+    suspend fun getRemainingBalance(): Long {
+        val limit = counterManager.getLimit()
+        val cumulative = counterManager.getCumulative()
+        return maxOf(0L, limit - cumulative)
+    }
+
     suspend fun canSign(amount: Long): Boolean {
         return counterManager.canSign(amount)
     }
