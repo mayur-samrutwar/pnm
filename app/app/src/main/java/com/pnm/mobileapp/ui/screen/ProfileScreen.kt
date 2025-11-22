@@ -9,6 +9,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,12 +23,18 @@ import androidx.compose.ui.unit.sp
 import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
 import com.pnm.mobileapp.ui.viewmodel.AppViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun ProfileScreen(viewModel: AppViewModel) {
     val wallet by viewModel.wallet.collectAsState()
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var isGeneratingEthWallet by remember { mutableStateOf(false) }
+    
+    // Check if ETH address is placeholder (failed generation)
+    val isEthAddressPlaceholder = wallet?.ethAddress?.startsWith("0x0000000000000000000000000000000000000000") == true
 
     Column(
         modifier = Modifier
@@ -204,26 +211,77 @@ fun ProfileScreen(viewModel: AppViewModel) {
                     Text(
                         text = wallet?.ethAddress ?: "Not generated",
                         style = MaterialTheme.typography.bodySmall.copy(
-                            color = Color(0xFF1E293B),
+                            color = if (isEthAddressPlaceholder) Color(0xFFEF4444) else Color(0xFF1E293B),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium
                         ),
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(
-                        onClick = {
-                            wallet?.ethAddress?.let {
-                                clipboardManager.setText(AnnotatedString(it))
-                                Toast.makeText(context, "Ethereum address copied!", Toast.LENGTH_SHORT).show()
+                    if (!isEthAddressPlaceholder) {
+                        IconButton(
+                            onClick = {
+                                wallet?.ethAddress?.let {
+                                    clipboardManager.setText(AnnotatedString(it))
+                                    Toast.makeText(context, "Ethereum address copied!", Toast.LENGTH_SHORT).show()
+                                }
                             }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "Copy",
+                                tint = Color(0xFF6366F1),
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ContentCopy,
-                            contentDescription = "Copy",
-                            tint = Color(0xFF6366F1),
-                            modifier = Modifier.size(20.dp)
+                    }
+                }
+                
+                // Show retry button if ETH address is placeholder
+                if (isEthAddressPlaceholder) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            isGeneratingEthWallet = true
+                            coroutineScope.launch {
+                                viewModel.regenerateEthereumWallet()
+                                // Wait a bit for wallet to update
+                                kotlinx.coroutines.delay(500)
+                                isGeneratingEthWallet = false
+                                Toast.makeText(
+                                    context,
+                                    if (viewModel.wallet.value?.ethAddress?.startsWith("0x0000") == false) {
+                                        "Ethereum wallet generated successfully!"
+                                    } else {
+                                        "Failed to generate. Please try again."
+                                    },
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
+                        enabled = !isGeneratingEthWallet,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF6366F1)
                         )
+                    ) {
+                        if (isGeneratingEthWallet) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Generating...")
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Generate",
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Generate Ethereum Wallet")
+                        }
                     }
                 }
             }

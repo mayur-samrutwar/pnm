@@ -147,5 +147,29 @@ class AppViewModel(private val context: Context) : ViewModel() {
     suspend fun getPublicKeyHex(): String {
         return signer.exportPublicKeyHex(keyPair)
     }
+
+    /**
+     * Regenerate Ethereum wallet (useful if initial generation failed)
+     */
+    fun regenerateEthereumWallet() {
+        viewModelScope.launch {
+            try {
+                val (ethPrivKey, ethAddress) = ethereumWalletGenerator.generateKeyPair()
+                ethPrivateKey = ethPrivKey
+                
+                // Update wallet with new ETH address
+                val currentWallet = _wallet.value
+                if (currentWallet != null) {
+                    _wallet.value = currentWallet.copy(
+                        ethAddress = ethAddress,
+                        ethPrivateKey = ethPrivKey
+                    )
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("AppViewModel", "Failed to regenerate ETH wallet", e)
+                // Error is logged, user can try again
+            }
+        }
+    }
 }
 

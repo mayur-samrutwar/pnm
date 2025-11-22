@@ -1,13 +1,17 @@
 package com.pnm.mobileapp.crypto
 
 import android.util.Log
-import org.bouncycastle.jce.provider.BouncyCastleProvider
+import org.bouncycastle.asn1.sec.SECNamedCurves
+import org.bouncycastle.asn1.x9.X9ECParameters
+import org.bouncycastle.crypto.AsymmetricCipherKeyPair
+import org.bouncycastle.crypto.generators.ECKeyPairGenerator
+import org.bouncycastle.crypto.params.ECKeyGenerationParameters
+import org.bouncycastle.crypto.params.ECPrivateKeyParameters
+import org.bouncycastle.crypto.params.ECPublicKeyParameters
+import org.bouncycastle.math.ec.ECPoint
 import org.bouncycastle.util.encoders.Hex
-import java.security.*
-import java.security.interfaces.ECPrivateKey
-import java.security.interfaces.ECPublicKey
-import java.security.spec.ECGenParameterSpec
 import java.security.MessageDigest
+import java.security.SecureRandom
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -18,46 +22,38 @@ import kotlinx.coroutines.withContext
 class EthereumWalletGenerator {
     companion object {
         private const val TAG = "EthereumWalletGenerator"
-        private const val CURVE_NAME = "secp256k1"
-        
-        init {
-            // Register BouncyCastle as security provider if not already registered
-            try {
-                if (Security.getProvider("BC") == null) {
-                    Security.addProvider(org.bouncycastle.jce.provider.BouncyCastleProvider())
-                    Log.d(TAG, "BouncyCastle provider registered")
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not register BouncyCastle provider", e)
-            }
-        }
     }
 
     /**
-     * Generate a new Ethereum key pair
+     * Generate a new Ethereum key pair using BouncyCastle's direct crypto API
+     * (not JCA, which doesn't work properly on Android)
      */
     suspend fun generateKeyPair(): Pair<ByteArray, String> = withContext(Dispatchers.IO) {
         try {
-            // Generate secp256k1 key pair
-            // Note: secp256k1 might not be available on all Android devices
-            // If it fails, we'll catch and handle it
-            val keyPairGenerator = try {
-                KeyPairGenerator.getInstance("EC", "BC") // Try BouncyCastle provider first
-            } catch (e: Exception) {
-                Log.d(TAG, "BouncyCastle provider not available, using default", e)
-                KeyPairGenerator.getInstance("EC") // Fallback to default provider
-            }
+            // Use BouncyCastle's direct crypto API (not JCA)
+            // Get secp256k1 curve parameters
+            val curveParams: X9ECParameters = SECNamedCurves.getByName("secp256k1")
+                ?: throw Exception("secp256k1 curve not found in BouncyCastle")
             
-            val ecGenParameterSpec = ECGenParameterSpec(CURVE_NAME)
-            keyPairGenerator.initialize(ecGenParameterSpec)
-            val keyPair = keyPairGenerator.generateKeyPair()
-
-            val privateKey = keyPair.private as ECPrivateKey
-            val publicKey = keyPair.public as ECPublicKey
+            // Generate key pair using BouncyCastle's ECKeyPairGenerator
+            val keyGen = ECKeyPairGenerator()
+            val ecParams = org.bouncycastle.crypto.params.ECDomainParameters(
+                curveParams.curve,
+                curveParams.g,
+                curveParams.n,
+                curveParams.h
+            )
+            val keyGenParams = ECKeyGenerationParameters(ecParams, SecureRandom())
+            keyGen.init(keyGenParams)
+            
+            val keyPair: AsymmetricCipherKeyPair = keyGen.generateKeyPair()
+            val privateKeyParams = keyPair.private as ECPrivateKeyParameters
+            val publicKeyParams = keyPair.public as ECPublicKeyParameters
+            
+            Log.d(TAG, "Ethereum key pair generated successfully using BouncyCastle direct API")
 
             // Get private key bytes (32 bytes)
-            val privateKeyBytes = privateKey.s.toByteArray()
-            // Ensure it's exactly 32 bytes (remove leading zero if present)
+            val privateKeyBytes = privateKeyParams.d.toByteArray()
             val privateKey32 = if (privateKeyBytes.size > 32) {
                 privateKeyBytes.sliceArray(privateKeyBytes.size - 32 until privateKeyBytes.size)
             } else if (privateKeyBytes.size < 32) {
@@ -66,35 +62,37 @@ class EthereumWalletGenerator {
                 privateKeyBytes
             }
 
-            // Derive Ethereum address from public key
-            val address = deriveEthereumAddress(publicKey)
+            // Derive Ethereum address from public key point
+            val address = deriveEthereumAddressFromBCPoint(publicKeyParams.q)
 
             return@withContext Pair(privateKey32, address)
         } catch (e: Exception) {
-            Log.e(TAG, "Error generating Ethereum key pair", e)
-            throw e
+            Log.e(TAG, "Error generating Ethereum key pair: ${e.javaClass.simpleName} - ${e.message}", e)
+            e.printStackTrace()
+            throw Exception("Ethereum wallet generation failed: ${e.message}", e)
         }
     }
 
     /**
-     * Derive Ethereum address from public key using Keccak-256
+     * Derive Ethereum address from BouncyCastle ECPoint using Keccak-256
      */
-    private fun deriveEthereumAddress(publicKey: ECPublicKey): String {
-        val point = publicKey.w
-        val x = point.affineX.toByteArray()
-        val y = point.affineY.toByteArray()
+    private fun deriveEthereumAddressFromBCPoint(point: ECPoint): String {
+        val x = point.affineXCoord.toBigInteger().toByteArray()
+        val y = point.affineYCoord.toBigInteger().toByteArray()
 
         // Ensure x and y are exactly 32 bytes (secp256k1 coordinates)
         val x32 = if (x.size >= 32) {
             x.sliceArray(x.size - 32 until x.size)
         } else {
-            ByteArray(32 - x.size) { 0 } + x
+            val padding = ByteArray(32 - x.size) { 0 }
+            padding + x
         }
         
         val y32 = if (y.size >= 32) {
             y.sliceArray(y.size - 32 until y.size)
         } else {
-            ByteArray(32 - y.size) { 0 } + y
+            val padding = ByteArray(32 - y.size) { 0 }
+            padding + y
         }
 
         // Uncompressed public key: 0x04 || x || y (65 bytes)
@@ -111,6 +109,7 @@ class EthereumWalletGenerator {
 
         return "0x" + Hex.toHexString(addressBytes)
     }
+    
 
     /**
      * Keccak-256 hash function using BouncyCastle
