@@ -140,9 +140,36 @@ mobile-app/
 - **Sync failed**: Check internet connection and Gradle version
 - **Dependencies not found**: Invalidate caches: File → Invalidate Caches / Restart
 
+## Running Tests
+
+```bash
+# Run instrumentation tests (requires emulator/device)
+./gradlew connectedAndroidTest
+
+# Run specific test class
+./gradlew connectedAndroidTest --tests "com.pnm.mobileapp.SlipCreationTest"
+```
+
+## Installing APK
+
+After building, the APK will be located at:
+```
+app/build/outputs/apk/debug/app-debug.apk
+```
+
+To install manually:
+```bash
+# Install on connected device/emulator
+adb install app/build/outputs/apk/debug/app-debug.apk
+
+# Or use Gradle
+./gradlew installDebug
+```
+
 ## Development Notes
 
 - Minimum SDK: 24 (Android 7.0)
-- Target SDK: 33 (Android 13)
-- Compose Compiler: Compatible with Kotlin 1.9+
+- Target SDK: 34 (Android 14)
+- Compose Compiler: 1.5.3 (Compatible with Kotlin 1.9.10)
+- Features: Wallet generation, QR code scanning, Room database, Retrofit API calls
 
