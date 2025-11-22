@@ -56,10 +56,16 @@ class MerchantViewModel(
                 } else {
                     val response = hubApiService.redeemSlip(request)
                     _syncResponse.value = if (response.isSuccessful) {
-                        // Update slip status
-                        val updatedSlip = slip.copy(status = SlipStatus.REDEEMED)
+                        val redeemResponse = response.body()
+                        // Only mark as REDEEMED if status is "redeemed" (on-chain redemption succeeded)
+                        val newStatus = when (redeemResponse?.status?.lowercase()) {
+                            "redeemed" -> SlipStatus.REDEEMED
+                            "validated" -> SlipStatus.VALIDATED
+                            else -> SlipStatus.VALIDATED // Default to validated if status unclear
+                        }
+                        val updatedSlip = slip.copy(status = newStatus)
                         pendingSlipDao.updateSlip(updatedSlip)
-                        response.body()?.message ?: "Success"
+                        redeemResponse?.message ?: redeemResponse?.status ?: "Success"
                     } else {
                         val errorBody = response.errorBody()?.string() ?: response.message()
                         "Error: $errorBody"

@@ -71,6 +71,15 @@
       "type": "string",
       "description": "Cryptographic signature of the voucher in hexadecimal format",
       "pattern": "^0x[a-fA-F0-9]+$"
+    },
+    "publicKey": {
+      "type": "string",
+      "description": "P-256 public key for signature verification (optional)",
+      "pattern": "^(0x)?[a-fA-F0-9]{130}$"
+    },
+    "originalVoucherJson": {
+      "type": "string",
+      "description": "Original voucher JSON that was signed (optional, for P-256 verification)"
     }
   },
   "additionalProperties": false

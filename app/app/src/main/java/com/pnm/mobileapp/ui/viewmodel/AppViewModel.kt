@@ -199,17 +199,22 @@ class AppViewModel(
     suspend fun getOfflineLimit(): Long {
         // Get vault balance as the limit (convert from USDC string to Long)
         val vaultBalanceStr = _vaultBalance.value
-        if (vaultBalanceStr != null) {
+        android.util.Log.d("AppViewModel", "getOfflineLimit: vaultBalanceStr=$vaultBalanceStr")
+        if (vaultBalanceStr != null && vaultBalanceStr.isNotEmpty()) {
             try {
                 // Convert "1000.0" to 1000000000 (micro USDC units, since USDC has 6 decimals)
                 val balanceDouble = vaultBalanceStr.toDouble()
-                return (balanceDouble * 1_000_000).toLong()
+                val limit = (balanceDouble * 1_000_000).toLong()
+                android.util.Log.d("AppViewModel", "getOfflineLimit: parsed limit=$limit from balance=$balanceDouble")
+                return limit
             } catch (e: Exception) {
                 android.util.Log.e("AppViewModel", "Error parsing vault balance: $vaultBalanceStr", e)
             }
         }
         // Fallback to counter manager limit if vault balance not available
-        return counterManager.getLimit()
+        val fallbackLimit = counterManager.getLimit()
+        android.util.Log.d("AppViewModel", "getOfflineLimit: using fallback limit=$fallbackLimit")
+        return fallbackLimit
     }
 
     suspend fun getRemainingBalance(): Long {
@@ -219,7 +224,7 @@ class AppViewModel(
         // Update the StateFlow so UI observes the change
         _cumulative.value = cumulative
         val remaining = maxOf(0L, limit - cumulative)
-        android.util.Log.d("AppViewModel", "getRemainingBalance: limit=$limit (${limit / 1_000_000.0} USDC), cumulative=$cumulative (${cumulative / 1_000_000.0} USDC), remaining=$remaining (${remaining / 1_000_000.0} USDC)")
+        android.util.Log.d("AppViewModel", "getRemainingBalance: vaultBalance=${_vaultBalance.value}, limit=$limit (${limit / 1_000_000.0} USDC), cumulative=$cumulative (${cumulative / 1_000_000.0} USDC), remaining=$remaining (${remaining / 1_000_000.0} USDC)")
         return remaining
     }
 
@@ -229,6 +234,7 @@ class AppViewModel(
      */
     fun fetchVaultBalance() {
         viewModelScope.launch {
+            android.util.Log.d("AppViewModel", "fetchVaultBalance: Starting...")
             val wallet = _wallet.value
             val ethAddress = wallet?.ethAddress
             
@@ -246,20 +252,38 @@ class AppViewModel(
                     val balanceResponse = response.body()!!
                     android.util.Log.d("AppViewModel", "Vault balance response: status=${balanceResponse.status}, balance=${balanceResponse.balanceFormatted}")
                     if (balanceResponse.status == "success") {
+                        android.util.Log.d("AppViewModel", "Setting vault balance to: ${balanceResponse.balanceFormatted}")
                         _vaultBalance.value = balanceResponse.balanceFormatted
                         // Update counter manager limit with vault balance
                         val balanceDouble = balanceResponse.balanceFormatted.toDoubleOrNull()
                         if (balanceDouble != null) {
                             val limitInMicroUSDC = (balanceDouble * 1_000_000).toLong()
+                            android.util.Log.d("AppViewModel", "Calculated limit: $limitInMicroUSDC from balance: $balanceDouble")
                             // Update limit without resetting cumulative
                             val currentLimit = counterManager.getLimit()
+                            android.util.Log.d("AppViewModel", "Current limit: $currentLimit, New limit: $limitInMicroUSDC")
                             if (currentLimit != limitInMicroUSDC) {
+                                // updateLimit is a suspend function, so we need to await it
                                 counterManager.updateLimit(limitInMicroUSDC)
-                                android.util.Log.d("AppViewModel", "Updated offline limit to: $limitInMicroUSDC (from vault balance: ${balanceResponse.balanceFormatted})")
+                                // Verify the update succeeded
+                                val updatedLimit = counterManager.getLimit()
+                                if (updatedLimit == limitInMicroUSDC) {
+                                    android.util.Log.d("AppViewModel", "✅ Successfully updated offline limit to: $limitInMicroUSDC (from vault balance: ${balanceResponse.balanceFormatted})")
+                                } else {
+                                    android.util.Log.e("AppViewModel", "❌ Failed to update limit! Expected: $limitInMicroUSDC, Got: $updatedLimit")
+                                }
+                            } else {
+                                android.util.Log.d("AppViewModel", "Limit unchanged, no update needed")
                             }
                             // Refresh cumulative and counter display
-                            _cumulative.value = counterManager.getCumulative()
-                            _counter.value = counterManager.getCounter()
+                            val newCumulative = counterManager.getCumulative()
+                            val newCounter = counterManager.getCounter()
+                            val finalLimit = counterManager.getLimit()
+                            _cumulative.value = newCumulative
+                            _counter.value = newCounter
+                            android.util.Log.d("AppViewModel", "After update - cumulative: $newCumulative, counter: $newCounter, limit: $finalLimit")
+                        } else {
+                            android.util.Log.e("AppViewModel", "Failed to parse balance: ${balanceResponse.balanceFormatted}")
                         }
                     } else {
                         android.util.Log.e("AppViewModel", "Vault balance API returned error: ${balanceResponse.status}")
@@ -455,9 +479,14 @@ class AppViewModel(
                 val depositResponse = response.body()!!
                 if (depositResponse.status == "success") {
                     android.util.Log.d("AppViewModel", "Deposit successful: ${depositResponse.depositTxHash}")
+                    // Wait a bit for transaction to be mined
+                    delay(2000) // 2 seconds delay
                     // Refresh balances after deposit
                     fetchUSDCBalance()
                     fetchVaultBalance() // Update offline limit
+                    // Wait a bit more and refresh again to ensure balance is updated
+                    delay(1000)
+                    fetchVaultBalance()
                     Result.success("Deposit successful: ${depositResponse.depositTxHash}")
                 } else {
                     Result.failure(Exception(depositResponse.message))

@@ -68,6 +68,50 @@ export class VaultClient {
   }
 
   /**
+   * Redeem a P-256 voucher on-chain using hub's authority
+   * This function is called by the hub after verifying P-256 signatures off-chain
+   * @param voucher The voucher to redeem (payerAddress should be Ethereum address)
+   * @returns Transaction hash
+   */
+  async redeemVoucherByHub(voucher: Voucher): Promise<string> {
+    // Encode voucher payload (same format as redeemVoucher)
+    const voucherPayload = ethers.AbiCoder.defaultAbiCoder().encode(
+      [
+        'address', // contractAddress
+        'uint256', // expiry
+        'uint256', // chainId
+        'address', // payerAddress (Ethereum address where deposits are)
+        'address', // payeeAddress
+        'uint256', // amount
+        'uint256', // cumulative
+        'bytes32', // slipId
+      ],
+      [
+        voucher.contractAddress,
+        BigInt(voucher.expiry),
+        BigInt(voucher.chainId),
+        voucher.payerAddress, // This should be the Ethereum address
+        voucher.payeeAddress,
+        BigInt(voucher.amount),
+        BigInt(voucher.cumulative),
+        ethers.id(voucher.slipId), // Convert UUID to bytes32
+      ]
+    );
+
+    // Call redeemVoucherByHub on the contract (hub signs as owner)
+    const tx = await this.contract.redeemVoucherByHub(voucherPayload);
+
+    // Wait for transaction to be mined
+    const receipt = await tx.wait();
+
+    if (!receipt) {
+      throw new Error('Transaction receipt not found');
+    }
+
+    return receipt.hash;
+  }
+
+  /**
    * Get the contract instance (for advanced usage)
    */
   getContract(): ethers.Contract {
@@ -120,6 +164,7 @@ export class VaultClient {
 // Vault contract ABI (minimal interface for redeemVoucher)
 export const VAULT_ABI = [
   'function redeemVoucher(bytes calldata voucherPayload, bytes calldata signature) external',
+  'function redeemVoucherByHub(bytes calldata voucherPayload) external',
   'function deposit(address user, address token, uint256 amount) external',
   'function deposits(address) external view returns (uint256)',
   'function usedSlip(address, bytes32) external view returns (bool)',

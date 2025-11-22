@@ -361,9 +361,10 @@ fun HomeScreen(
                                         
                                         val slip = Slip(
                                             slipId = slipId,
-                                            payer = w.address,
+                                            payer = w.address, // Device address (P-256)
                                             amount = amountInput,
-                                            userAddress = w.address,
+                                            userAddress = w.address, // Device address (for backward compatibility)
+                                            ethAddress = w.ethAddress, // Ethereum address (where deposits are)
                                             cumulative = currentCumulative + amountInMicroUSDC,
                                             counter = currentCounter + 1,
                                             publicKey = publicKey,

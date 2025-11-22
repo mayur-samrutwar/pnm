@@ -177,25 +177,30 @@ fun MerchantScreen(
                         checked = isOnline,
                         onCheckedChange = { isOnline = it }
                     )
-                    Text(if (isOnline) "Online (Validate)" else "Offline (Redeem)")
+                    Text(if (isOnline) "Validate Only (Check)" else "Redeem & Transfer Money")
                 }
                 
                 // Sync button at the top
-                val pendingCount = pendingSlips.count { it.status == SlipStatus.PENDING }
+                // Allow syncing PENDING or VALIDATED slips (validated slips can still be redeemed)
+                val syncableSlips = pendingSlips.filter { 
+                    it.status == SlipStatus.PENDING || it.status == SlipStatus.VALIDATED 
+                }
+                val syncableCount = syncableSlips.size
                 Button(
                     onClick = {
-                        val pendingOnly = pendingSlips.filter { it.status == SlipStatus.PENDING }
-                        if (pendingOnly.isEmpty()) {
-                            Toast.makeText(context, "No pending slips to sync", Toast.LENGTH_SHORT).show()
+                        if (syncableSlips.isEmpty()) {
+                            Toast.makeText(context, "No slips to sync", Toast.LENGTH_SHORT).show()
                         } else {
-                            viewModel.syncSelectedSlips(pendingOnly, isOnline, merchantEthAddress)
-                            Toast.makeText(context, "Syncing ${pendingOnly.size} slip(s)...", Toast.LENGTH_SHORT).show()
+                            viewModel.syncSelectedSlips(syncableSlips, isOnline, merchantEthAddress)
+                            val action = if (isOnline) "Validating" else "Redeeming"
+                            Toast.makeText(context, "$action ${syncableSlips.size} slip(s)...", Toast.LENGTH_SHORT).show()
                         }
                     },
-                    enabled = pendingCount > 0,
+                    enabled = syncableCount > 0,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Sync All Pending Slips (${pendingCount})")
+                    val actionText = if (isOnline) "Validate All" else "Redeem All & Transfer"
+                    Text("$actionText (${syncableCount})")
                 }
                 
                 // Sync response

@@ -168,6 +168,78 @@ contract Vault is Ownable {
     }
 
     /**
+     * @dev Redeems a voucher on behalf of a user after P-256 signature verification by the hub
+     * This function allows the hub (owner) to redeem vouchers that were signed with P-256
+     * (which cannot be verified on-chain) after verifying the signature off-chain.
+     * 
+     * @param voucherPayload The ABI-encoded voucher data (same format as redeemVoucher)
+     * 
+     * Voucher structure (encoded in voucherPayload):
+     * - contractAddress: address - Must match this contract's address
+     * - expiry: uint256 - Must be greater than block.timestamp
+     * - chainId: uint256 - Must match block.chainid
+     * - payerAddress: address - The Ethereum address where deposits are (not device address)
+     * - payeeAddress: address - The address to receive the payment
+     * - amount: uint256 - The amount to transfer
+     * - cumulative: uint256 - The cumulative amount spent (must be <= deposits[payer])
+     * - slipId: bytes32 - Unique identifier to prevent double-spending
+     * 
+     * Requirements:
+     * - Only the owner (hub) can call this function
+     * - The voucher must not be expired
+     * - The chainId must match the current chain
+     * - The contractAddress must match this contract
+     * - The slipId must not have been used before
+     * - The payer must have sufficient deposits (>= cumulative)
+     */
+    function redeemVoucherByHub(bytes calldata voucherPayload) external onlyOwner {
+        // Decode voucher fields
+        (
+            address contractAddress,
+            uint256 expiry,
+            uint256 chainId,
+            address payerAddress,
+            address payeeAddress,
+            uint256 amount,
+            uint256 cumulative,
+            bytes32 slipId
+        ) = abi.decode(voucherPayload, (address, uint256, uint256, address, address, uint256, uint256, bytes32));
+
+        // Verify contract address
+        require(contractAddress == address(this), "Vault: invalid contract address");
+
+        // Verify expiry
+        require(expiry > block.timestamp, "Vault: voucher expired");
+
+        // Verify chain ID
+        require(chainId == block.chainid, "Vault: invalid chain ID");
+
+        // Check if slip has been used
+        require(!usedSlip[payerAddress][slipId], "Vault: voucher already used");
+
+        // Check sufficient deposits
+        require(deposits[payerAddress] >= cumulative, "Vault: insufficient deposits");
+
+        // Mark slip as used
+        usedSlip[payerAddress][slipId] = true;
+
+        // Decrease deposits by the amount being redeemed
+        deposits[payerAddress] -= amount;
+
+        // Transfer tokens to payee
+        address token = userTokens[payerAddress];
+        require(token != address(0), "Vault: no token found for payer");
+        
+        IERC20 erc20Token = IERC20(token);
+        require(
+            erc20Token.transfer(payeeAddress, amount),
+            "Vault: transfer to payee failed"
+        );
+        
+        emit VoucherRedeemed(payerAddress, payeeAddress, amount, slipId);
+    }
+
+    /**
      * @dev Records a settlement for a user with a specific nonce
      * @param user The address of the user being settled
      * @param nonce The settlement nonce (prevents replay)

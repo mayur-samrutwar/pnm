@@ -43,6 +43,7 @@ data class VoucherRequest(
 
 /**
  * Voucher format expected by hub server
+ * Note: publicKey is optional for P-256 signature verification
  */
 data class HubVoucher(
     @SerializedName("payerAddress")
@@ -66,8 +67,54 @@ data class HubVoucher(
     @SerializedName("signature")
     val signature: String,
     @SerializedName("publicKey")
-    val publicKey: String? = null
+    val publicKey: String? = null, // P-256 public key for signature verification
+    @SerializedName("originalVoucherJson")
+    val originalVoucherJson: String? = null // Original JSON that was signed (for P-256 verification)
 )
+
+/**
+ * Ensure address is in valid Ethereum format (0x followed by 40 hex chars)
+ */
+private fun String.ensureEthAddressFormat(): String {
+    var addr = this.trim()
+    // Remove 0x prefix if present
+    if (addr.startsWith("0x")) {
+        addr = addr.substring(2)
+    }
+    // Pad or truncate to 40 hex characters
+    addr = addr.lowercase().take(40).padStart(40, '0')
+    return "0x$addr"
+}
+
+/**
+ * Ensure signature has 0x prefix (required by hub schema)
+ */
+private fun String.ensureSignatureFormat(): String {
+    val sig = this.trim()
+    return if (sig.startsWith("0x")) {
+        sig
+    } else {
+        "0x$sig"
+    }
+}
+
+/**
+ * Ensure public key has 0x prefix and is 130 hex chars (65 bytes: 0x04 + x + y)
+ */
+private fun String?.ensurePublicKeyFormat(): String? {
+    if (this == null) return null
+    var key = this.trim()
+    // Remove 0x if present
+    if (key.startsWith("0x")) {
+        key = key.substring(2)
+    }
+    // Ensure it's exactly 130 hex chars (65 bytes)
+    if (key.length != 130) {
+        // If too short, pad with zeros; if too long, truncate
+        key = key.take(130).padStart(130, '0')
+    }
+    return "0x$key"
+}
 
 /**
  * Extension function to convert Slip to HubVoucher
@@ -79,18 +126,32 @@ fun Slip.toHubVoucher(merchantAddress: String = "0x00000000000000000000000000000
             val gson = Gson()
             val voucher = gson.fromJson(rawJson, Voucher::class.java)
             // Convert mobile app Voucher to hub HubVoucher
+            // Reconstruct the original JSON that was signed (without signature field)
+            val originalVoucher = Voucher(
+                slipId = voucher.slipId,
+                payer = voucher.payer,
+                amount = voucher.amount,
+                cumulative = voucher.cumulative,
+                counter = voucher.counter,
+                publicKey = voucher.publicKey,
+                signature = "", // Empty signature - this is what was signed
+                timestamp = voucher.timestamp
+            )
+            val originalJson = gson.toJson(originalVoucher)
+            
             HubVoucher(
-                payerAddress = voucher.payer,
-                payeeAddress = merchantAddress, // Merchant address (could be passed as parameter)
+                payerAddress = (this.ethAddress.ifEmpty { voucher.payer }).ensureEthAddressFormat(), // Use Ethereum address if available
+                payeeAddress = merchantAddress.ensureEthAddressFormat(),
                 amount = voucher.amount.toLongOrNull() ?: 0L,
                 chainId = 1,
                 cumulative = voucher.cumulative,
                 counter = voucher.counter,
                 expiry = (voucher.timestamp / 1000) + (30 * 24 * 60 * 60), // 30 days from timestamp
                 slipId = voucher.slipId,
-                contractAddress = Constants.VAULT_CONTRACT_ADDRESS,
-                signature = voucher.signature,
-                publicKey = voucher.publicKey
+                contractAddress = Constants.VAULT_CONTRACT_ADDRESS.ensureEthAddressFormat(),
+                signature = voucher.signature.ensureSignatureFormat(),
+                publicKey = voucher.publicKey?.ensurePublicKeyFormat(),
+                originalVoucherJson = originalJson // Use reconstructed original JSON (without signature)
             )
         } catch (e: Exception) {
             // Fallback: construct from Slip fields
@@ -102,18 +163,37 @@ fun Slip.toHubVoucher(merchantAddress: String = "0x00000000000000000000000000000
 }
 
 private fun Slip.createHubVoucherFromSlip(merchantAddress: String): HubVoucher {
+    fun String.ensureEthAddressFormat(): String {
+        var addr = this.trim()
+        if (addr.startsWith("0x")) {
+            addr = addr.substring(2)
+        }
+        addr = addr.lowercase().take(40).padStart(40, '0')
+        return "0x$addr"
+    }
+    
+    fun String.ensureSignatureFormat(): String {
+        val sig = this.trim()
+        return if (sig.startsWith("0x")) {
+            sig
+        } else {
+            "0x$sig"
+        }
+    }
+    
     return HubVoucher(
-        payerAddress = payer.ifEmpty { userAddress },
-        payeeAddress = merchantAddress,
+        payerAddress = (ethAddress.ifEmpty { payer.ifEmpty { userAddress } }).ensureEthAddressFormat(), // Prefer Ethereum address
+        payeeAddress = merchantAddress.ensureEthAddressFormat(),
         amount = amount.toLongOrNull() ?: 0L,
         chainId = 1,
         cumulative = cumulative,
         counter = counter,
         expiry = (timestamp / 1000) + (30 * 24 * 60 * 60), // 30 days from timestamp
         slipId = slipId,
-        contractAddress = Constants.VAULT_CONTRACT_ADDRESS,
-        signature = signature,
-        publicKey = publicKey
+        contractAddress = Constants.VAULT_CONTRACT_ADDRESS.ensureEthAddressFormat(),
+        signature = signature.ensureSignatureFormat(),
+        publicKey = publicKey?.ensurePublicKeyFormat(),
+        originalVoucherJson = rawJson // Include original JSON for P-256 verification
     )
 }
 
@@ -123,9 +203,9 @@ data class ValidateResponse(
 )
 
 data class RedeemResponse(
-    val success: Boolean,
-    val message: String,
-    val transactionHash: String? = null
+    val status: String, // "redeemed", "validated", or "error"
+    val message: String? = null,
+    val txHash: String? = null
 )
 
 data class RefillResponse(

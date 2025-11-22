@@ -9,11 +9,12 @@ data class Slip(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     val slipId: String = "",
-    val payer: String = "", // userAddress/publicKey
+    val payer: String = "", // userAddress/publicKey (device address)
     @SerializedName("amount")
     val amount: String,
     @SerializedName("userAddress")
-    val userAddress: String = "", // Keep for backward compatibility
+    val userAddress: String = "", // Keep for backward compatibility (device address)
+    val ethAddress: String = "", // User's Ethereum address (where deposits are)
     val cumulative: Long = 0L,
     val counter: Int = 0,
     @SerializedName("publicKey")

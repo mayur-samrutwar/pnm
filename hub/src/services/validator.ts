@@ -25,9 +25,25 @@ export interface Voucher {
 
 /**
  * Verify voucher against JSON schema
+ * Returns validation result with detailed errors
  */
 export function verifySchema(voucher: any): boolean {
   return validateSchema(voucher) === true;
+}
+
+/**
+ * Get detailed schema validation errors
+ */
+export function getSchemaErrors(voucher: any): string[] {
+  const valid = validateSchema(voucher);
+  if (valid) {
+    return [];
+  }
+  const errors = validateSchema.errors || [];
+  return errors.map((err: any) => {
+    const path = err.instancePath || err.dataPath || 'root';
+    return `${path} ${err.message || 'is invalid'}`;
+  });
 }
 
 /**
@@ -172,9 +188,23 @@ export function verifySignatureP256(
     const hash = require('crypto').createHash('sha256').update(messageHash).digest();
 
     // Verify signature
-    return keyPair.verify(hash, signature);
+    const isValid = keyPair.verify(hash, signature);
+    if (!isValid) {
+      console.error('P-256 signature verification details:');
+      console.error('  Public key length:', normalizedPubKey.length);
+      console.error('  Signature length:', normalizedSig.length);
+      console.error('  Public key starts with 04:', normalizedPubKey.substring(0, 2) === '04');
+      console.error('  Message hash (hex):', hash.toString('hex'));
+      console.error('  Signature r (hex):', rHex);
+      console.error('  Signature s (hex):', sHex);
+    }
+    return isValid;
   } catch (error) {
     console.error('P-256 signature verification error:', error);
+    if (error instanceof Error) {
+      console.error('  Error message:', error.message);
+      console.error('  Error stack:', error.stack);
+    }
     return false;
   }
 }

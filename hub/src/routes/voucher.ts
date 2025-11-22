@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { Voucher, verifySchema, verifySignature, verifyExpiry, verifyContractAddress } from '../services/validator';
+import { Voucher, verifySchema, verifySignature, verifyExpiry, verifyContractAddress, getSchemaErrors } from '../services/validator';
 import { VaultClient, VAULT_ABI } from '../services/vaultClient';
 import { getDB } from '../db/inMemory';
 
@@ -59,9 +59,12 @@ router.post('/validate', async (req: Request, res: Response) => {
 
     // Verify JSON schema
     if (!verifySchema(voucher)) {
+      const errors = getSchemaErrors(voucher);
+      console.error('Schema validation errors:', errors);
+      console.error('Voucher received:', JSON.stringify(voucher, null, 2));
       return res.status(200).json({
         valid: false,
-        reason: 'Voucher does not match required schema',
+        reason: `Voucher does not match required schema: ${errors.join(', ')}`,
       });
     }
 
@@ -120,14 +123,63 @@ router.post('/redeem', async (req: Request, res: Response) => {
 
     // Validate voucher first
     if (!verifySchema(voucher)) {
+      const errors = getSchemaErrors(voucher);
+      console.error('Schema validation errors:', errors);
+      console.error('Voucher received:', JSON.stringify(voucher, null, 2));
       return res.status(400).json({
         status: 'error',
-        reason: 'Invalid voucher schema',
+        reason: `Invalid voucher schema: ${errors.join(', ')}`,
       });
     }
 
-    const sigResult = verifySignature(voucher);
-    if (!sigResult.valid) {
+    // Try P-256 verification first (if publicKey and originalVoucherJson are provided)
+    let sigValid = false;
+    if (voucher.publicKey && voucher.originalVoucherJson) {
+      const { verifySignatureP256 } = require('../services/validator');
+      // Extract signature from original JSON (it might not have 0x prefix)
+      let signatureToVerify = voucher.signature;
+      // Remove 0x prefix if present (verifySignatureP256 handles it)
+      if (signatureToVerify.startsWith('0x')) {
+        signatureToVerify = signatureToVerify.substring(2);
+      }
+      
+      // Extract public key - remove 0x prefix if present
+      let publicKeyToVerify = voucher.publicKey;
+      if (publicKeyToVerify.startsWith('0x')) {
+        publicKeyToVerify = publicKeyToVerify.substring(2);
+      }
+      
+      sigValid = verifySignatureP256(
+        voucher.originalVoucherJson,
+        publicKeyToVerify,
+        signatureToVerify
+      );
+      if (!sigValid) {
+        console.error('P-256 signature verification failed');
+        console.error('Public key (normalized):', publicKeyToVerify);
+        console.error('Signature (normalized):', signatureToVerify);
+        console.error('Original JSON length:', voucher.originalVoucherJson.length);
+        // Try to parse and check the JSON structure
+        try {
+          const parsed = JSON.parse(voucher.originalVoucherJson);
+          console.error('Parsed JSON signature:', parsed.signature);
+          console.error('Parsed JSON publicKey:', parsed.publicKey);
+        } catch (e) {
+          console.error('Failed to parse original JSON:', e);
+        }
+      }
+    } else {
+      // Fallback to secp256k1 verification (for Ethereum-style signatures)
+      const sigResult = verifySignature(voucher);
+      sigValid = sigResult.valid;
+      if (!sigValid) {
+        console.error('secp256k1 signature verification failed');
+        console.error('Expected payer:', voucher.payerAddress);
+        console.error('Recovered:', sigResult.recovered);
+      }
+    }
+    
+    if (!sigValid) {
       return res.status(400).json({
         status: 'error',
         reason: 'Invalid signature',
@@ -150,39 +202,68 @@ router.post('/redeem', async (req: Request, res: Response) => {
       });
     }
 
-    // Store slip record
-    await db.addSlip({
-      slipId: voucher.slipId,
-      payer: voucher.payerAddress,
-      amount: voucher.amount.toString(),
-      status: 'redeemed',
-      timestamp: Date.now()
-    });
-
-    // Mark slip as used (atomic operation)
-    await db.markSlipUsed(voucher.slipId);
-
     let txHash: string | undefined;
+    let redemptionStatus = 'validated'; // Default: only validated, not redeemed
 
     // Optionally redeem on-chain
     if (REDEEM_ON_CHAIN) {
       const client = getVaultClient();
       if (client) {
         try {
-          txHash = await client.redeemVoucher(voucher, voucher.signature);
-        } catch (error) {
+          // Check if this is a P-256 voucher (has publicKey and originalVoucherJson)
+          if (voucher.publicKey && voucher.originalVoucherJson) {
+            // For P-256 vouchers, use redeemVoucherByHub which allows the hub to redeem
+            // after verifying P-256 signature off-chain
+            console.log('Redeeming P-256 voucher on-chain using hub authority...');
+            console.log('Payer address (Ethereum):', voucher.payerAddress);
+            console.log('Payee address:', voucher.payeeAddress);
+            console.log('Amount:', voucher.amount);
+            
+            txHash = await client.redeemVoucherByHub(voucher);
+            console.log('P-256 voucher redeemed on-chain successfully. Transaction hash:', txHash);
+            redemptionStatus = 'redeemed';
+          } else {
+            // This is a secp256k1 voucher - can redeem on-chain
+            txHash = await client.redeemVoucher(voucher, voucher.signature);
+            console.log('On-chain redemption successful. Transaction hash:', txHash);
+            redemptionStatus = 'redeemed';
+          }
+        } catch (error: any) {
           console.error('Error redeeming on-chain:', error);
-          // Note: slip is already marked as used, so we return reserved status
-          // In production, you might want to implement a rollback mechanism
+          console.error('Error details:', error.message);
+          if (error.data) {
+            console.error('Error data:', error.data);
+          }
+          // Don't mark as redeemed if on-chain redemption failed
+          redemptionStatus = 'validated';
         }
       } else {
         console.warn('Vault client not initialized, skipping on-chain redeem');
+        redemptionStatus = 'validated';
       }
     }
 
+    // Always store the slip record (validated or redeemed)
+    // Store slip record
+    await db.addSlip({
+      slipId: voucher.slipId,
+      payer: voucher.payerAddress,
+      amount: voucher.amount.toString(),
+      status: redemptionStatus === 'redeemed' ? 'redeemed' : 'validated',
+      timestamp: Date.now()
+    });
+
+    // Mark slip as used (atomic operation) - prevents double redemption
+    await db.markSlipUsed(voucher.slipId);
+
     return res.status(200).json({
-      status: 'reserved',
-      txHash,
+      status: redemptionStatus === 'redeemed' ? 'redeemed' : 'validated',
+      txHash: txHash || undefined,
+      message: txHash 
+        ? 'Redeemed on-chain successfully' 
+        : redemptionStatus === 'validated' 
+          ? 'Validated but not redeemed on-chain (P-256 voucher requires contract modification)'
+          : 'Validated',
     });
   } catch (error) {
     console.error('Error redeeming voucher:', error);
@@ -268,8 +349,10 @@ router.get('/vaultBalance/:address', async (req: Request, res: Response) => {
     const vaultAbi = ['function deposits(address) external view returns (uint256)'];
     const vaultContract = new ethers.Contract(vaultAddress, vaultAbi, provider);
     
+    console.log(`[vaultBalance] Querying vault ${vaultAddress} for address ${address}`);
     const depositBalance = await vaultContract.deposits(address);
     const depositBalanceStr = depositBalance.toString();
+    console.log(`[vaultBalance] Raw balance: ${depositBalanceStr}`);
     
     // Get token decimals (assuming USDC has 6 decimals)
     const tokenAddress = process.env.MOCK_ERC20_ADDRESS || process.env.USDC_ADDRESS;
