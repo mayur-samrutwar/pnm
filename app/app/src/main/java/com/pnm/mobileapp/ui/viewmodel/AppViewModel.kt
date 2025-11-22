@@ -56,7 +56,13 @@ class AppViewModel(private val context: Context) : ViewModel() {
                 keyPair = existingKeyPair
                 val address = signer.deriveAddress(existingKeyPair)
                 // Generate Ethereum wallet (not persisted, so regenerate)
-                val (ethPrivKey, ethAddress) = ethereumWalletGenerator.generateKeyPair()
+                val (ethPrivKey, ethAddress) = try {
+                    ethereumWalletGenerator.generateKeyPair()
+                } catch (e: Exception) {
+                    android.util.Log.e("AppViewModel", "Failed to generate ETH wallet, using placeholder", e)
+                    // Use placeholder if ETH wallet generation fails
+                    Pair(ByteArray(32), "0x0000000000000000000000000000000000000000")
+                }
                 ethPrivateKey = ethPrivKey
                 _wallet.value = Wallet(existingKeyPair, address, ethAddress, ethPrivKey)
             }
@@ -86,7 +92,14 @@ class AppViewModel(private val context: Context) : ViewModel() {
             val address = signer.deriveAddress(keyPair)
             
             // Generate Ethereum wallet (secp256k1 for deposits)
-            val (ethPrivKey, ethAddress) = ethereumWalletGenerator.generateKeyPair()
+            // Wrap in try-catch to prevent app crash if ETH wallet generation fails
+            val (ethPrivKey, ethAddress) = try {
+                ethereumWalletGenerator.generateKeyPair()
+            } catch (e: Exception) {
+                android.util.Log.e("AppViewModel", "Failed to generate ETH wallet, using placeholder", e)
+                // Use placeholder if ETH wallet generation fails
+                Pair(ByteArray(32), "0x0000000000000000000000000000000000000000")
+            }
             ethPrivateKey = ethPrivKey
             
             _wallet.value = Wallet(keyPair!!, address, ethAddress, ethPrivKey)

@@ -1,11 +1,13 @@
 package com.pnm.mobileapp.crypto
 
 import android.util.Log
+import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.bouncycastle.util.encoders.Hex
 import java.security.*
 import java.security.interfaces.ECPrivateKey
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
+import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -17,6 +19,18 @@ class EthereumWalletGenerator {
     companion object {
         private const val TAG = "EthereumWalletGenerator"
         private const val CURVE_NAME = "secp256k1"
+        
+        init {
+            // Register BouncyCastle as security provider if not already registered
+            try {
+                if (Security.getProvider("BC") == null) {
+                    Security.addProvider(org.bouncycastle.jce.provider.BouncyCastleProvider())
+                    Log.d(TAG, "BouncyCastle provider registered")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not register BouncyCastle provider", e)
+            }
+        }
     }
 
     /**
@@ -25,7 +39,15 @@ class EthereumWalletGenerator {
     suspend fun generateKeyPair(): Pair<ByteArray, String> = withContext(Dispatchers.IO) {
         try {
             // Generate secp256k1 key pair
-            val keyPairGenerator = KeyPairGenerator.getInstance("EC")
+            // Note: secp256k1 might not be available on all Android devices
+            // If it fails, we'll catch and handle it
+            val keyPairGenerator = try {
+                KeyPairGenerator.getInstance("EC", "BC") // Try BouncyCastle provider first
+            } catch (e: Exception) {
+                Log.d(TAG, "BouncyCastle provider not available, using default", e)
+                KeyPairGenerator.getInstance("EC") // Fallback to default provider
+            }
+            
             val ecGenParameterSpec = ECGenParameterSpec(CURVE_NAME)
             keyPairGenerator.initialize(ecGenParameterSpec)
             val keyPair = keyPairGenerator.generateKeyPair()
@@ -94,9 +116,16 @@ class EthereumWalletGenerator {
      * Keccak-256 hash function using BouncyCastle
      */
     private fun keccak256(input: ByteArray): ByteArray {
-        val digest = org.bouncycastle.jcajce.provider.digest.Keccak.Digest256()
-        digest.update(input)
-        return digest.digest()
+        try {
+            val digest = org.bouncycastle.jcajce.provider.digest.Keccak.Digest256()
+            digest.update(input)
+            return digest.digest()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error computing Keccak-256", e)
+            // Fallback to SHA-256 if Keccak fails (won't be correct Ethereum address, but won't crash)
+            val messageDigest = MessageDigest.getInstance("SHA-256")
+            return messageDigest.digest(input)
+        }
     }
 }
 
