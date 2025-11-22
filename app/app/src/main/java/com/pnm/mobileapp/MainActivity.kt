@@ -3,6 +3,7 @@ package com.pnm.mobileapp
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.fragment.app.FragmentActivity
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,7 +32,7 @@ enum class UserRole {
     USER, MERCHANT, HUB
 }
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private lateinit var database: AppDatabase
     private lateinit var hubApiService: HubApiService
 
@@ -115,7 +116,8 @@ fun MainScreen(
                         viewModel = appViewModel,
                         onShowSlipDialog = { slip, voucherJson ->
                             showSlipDialog = Pair(slip, voucherJson)
-                        }
+                        },
+                        activity = this@MainActivity
                     )
                 }
                 composable("merchant") {

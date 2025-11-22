@@ -97,6 +97,9 @@ dependencies {
     // Jetpack Security (Encrypted SharedPreferences)
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     
+    // Biometric Authentication
+    implementation("androidx.biometric:biometric:1.1.0")
+    
     // Testing
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")

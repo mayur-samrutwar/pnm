@@ -24,6 +24,12 @@ class AppViewModel(private val context: Context) : ViewModel() {
     private val _counter = MutableStateFlow(0)
     val counter: StateFlow<Int> = _counter
 
+    private val _isUsingHardwareCounter = MutableStateFlow(false)
+    val isUsingHardwareCounter: StateFlow<Boolean> = _isUsingHardwareCounter
+
+    private val _showSoftwareFallbackWarning = MutableStateFlow(false)
+    val showSoftwareFallbackWarning: StateFlow<Boolean> = _showSoftwareFallbackWarning
+
     init {
         viewModelScope.launch {
             _cumulative.value = counterManager.getCumulative()
@@ -31,8 +37,21 @@ class AppViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    fun generateWallet() {
+    fun generateWallet(activity: FragmentActivity? = null) {
         viewModelScope.launch {
+            // Request biometric authentication if available
+            if (activity != null && BiometricAuthHelper.isBiometricAvailable(context)) {
+                val authenticated = BiometricAuthHelper.authenticate(
+                    activity,
+                    title = "Generate Secure Wallet",
+                    subtitle = "Authenticate to generate hardware-backed key"
+                )
+                if (!authenticated) {
+                    // User cancelled or authentication failed
+                    return@launch
+                }
+            }
+            
             keyPair = signer.generateKeyPair()
             val publicKeyHex = signer.exportPublicKeyHex(keyPair)
             _wallet.value = Wallet(keyPair!!, publicKeyHex)
@@ -43,6 +62,8 @@ class AppViewModel(private val context: Context) : ViewModel() {
         counterManager.initCounter(limit)
         _cumulative.value = 0L
         _counter.value = 0
+        _isUsingHardwareCounter.value = counterManager.isUsingHardwareCounter()
+        _showSoftwareFallbackWarning.value = !_isUsingHardwareCounter.value
     }
 
     suspend fun getCumulative(): Long {

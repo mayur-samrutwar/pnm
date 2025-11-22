@@ -17,6 +17,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.pnm.mobileapp.data.model.Slip
 import com.pnm.mobileapp.data.model.Voucher
+import com.pnm.mobileapp.ui.component.SoftwareFallbackBanner
 import com.pnm.mobileapp.ui.viewmodel.AppViewModel
 import com.pnm.mobileapp.util.Constants
 import com.pnm.mobileapp.util.QRCodeUtils
@@ -30,12 +31,14 @@ import java.util.UUID
 @Composable
 fun UserScreen(
     viewModel: AppViewModel,
-    onShowSlipDialog: (Slip, String) -> Unit
+    onShowSlipDialog: (Slip, String) -> Unit,
+    activity: androidx.fragment.app.FragmentActivity? = null
 ) {
     val context = LocalContext.current
     val wallet by viewModel.wallet.collectAsState()
     val cumulative by viewModel.cumulative.collectAsState()
     val counter by viewModel.counter.collectAsState()
+    val showSoftwareFallbackWarning by viewModel.showSoftwareFallbackWarning.collectAsState()
     var amount by remember { mutableStateOf("") }
     var offlineLimit by remember { mutableStateOf("") }
     var showDepositInfo by remember { mutableStateOf(false) }
@@ -50,6 +53,10 @@ fun UserScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // Software Fallback Warning Banner
+        if (showSoftwareFallbackWarning) {
+            SoftwareFallbackBanner()
+        }
         // Generate Wallet Section
         Card(
             modifier = Modifier.fillMaxWidth()
@@ -60,7 +67,10 @@ fun UserScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text("Wallet", style = MaterialTheme.typography.headlineSmall)
-                Button(onClick = { viewModel.generateWallet() }) {
+                Button(onClick = { 
+                    val fragmentActivity = activity ?: (context as? androidx.fragment.app.FragmentActivity)
+                    viewModel.generateWallet(fragmentActivity)
+                }) {
                     Text("Generate Wallet")
                 }
                 wallet?.let {

@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Log
+import com.pnm.mobileapp.secure.HardwareKeystoreManager
 import java.security.*
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
@@ -31,12 +32,34 @@ class Signer(private val context: Context) {
         load(null)
     }
 
+    private val hardwareKeystoreManager = HardwareKeystoreManager(context)
+    private var isStrongBoxAvailable: Boolean? = null
+
     /**
-     * Generate a key pair, using Android Keystore if available, otherwise software-backed
+     * Check if StrongBox is available
+     */
+    suspend fun isStrongBoxAvailable(): Boolean {
+        if (isStrongBoxAvailable == null) {
+            isStrongBoxAvailable = hardwareKeystoreManager.detectStrongBoxAvailable()
+        }
+        return isStrongBoxAvailable ?: false
+    }
+
+    /**
+     * Generate a key pair, using StrongBox if available, otherwise hardware-backed, then software fallback
      */
     suspend fun generateKeyPair(): KeyPair = withContext(Dispatchers.IO) {
         try {
-            // Try to use Android Keystore (hardware-backed if available)
+            // Try StrongBox first
+            val strongBoxAvailable = isStrongBoxAvailable()
+            if (strongBoxAvailable) {
+                val generated = hardwareKeystoreManager.generateHardwareKey(KEYSTORE_ALIAS)
+                if (generated) {
+                    return@withContext getKeyPairFromKeystore()
+                }
+            }
+
+            // Try regular hardware-backed Keystore
             if (isKeyStoreAvailable()) {
                 generateKeyStoreKeyPair()
             } else {
@@ -47,6 +70,11 @@ class Signer(private val context: Context) {
             Log.w(TAG, "Failed to generate key pair with Keystore, using software fallback", e)
             generateSoftwareKeyPair()
         }
+    }
+
+    private suspend fun getKeyPairFromKeystore(): KeyPair = withContext(Dispatchers.IO) {
+        val privateKeyEntry = keyStore.getEntry(KEYSTORE_ALIAS, null) as KeyStore.PrivateKeyEntry
+        KeyPair(privateKeyEntry.certificate.publicKey, privateKeyEntry.privateKey)
     }
 
     private fun isKeyStoreAvailable(): Boolean {
