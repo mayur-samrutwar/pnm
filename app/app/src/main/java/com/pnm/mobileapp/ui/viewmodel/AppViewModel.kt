@@ -288,18 +288,25 @@ class AppViewModel(
                                     }
                                 } else if (isMerchantRedeemed) {
                                     // Merchant redeemed, vault balance decreased
-                                    if (limitInMicroUSDC >= currentCumulative) {
-                                        android.util.Log.d("AppViewModel", "Merchant redeemed: vault balance decreased from $currentLimit to $limitInMicroUSDC, cumulative=$currentCumulative")
-                                        counterManager.updateLimit(limitInMicroUSDC)
-                                        val updatedLimit = counterManager.getLimit()
-                                        if (updatedLimit == limitInMicroUSDC) {
-                                            android.util.Log.d("AppViewModel", "✅ Successfully updated offline limit to: $limitInMicroUSDC after merchant redemption")
-                                        } else {
-                                            android.util.Log.e("AppViewModel", "❌ Failed to update limit! Expected: $limitInMicroUSDC, Got: $updatedLimit")
-                                        }
-                                    } else {
-                                        android.util.Log.e("AppViewModel", "⚠️ Cannot update limit: new limit ($limitInMicroUSDC) < cumulative ($currentCumulative). This indicates overspending!")
-                                    }
+                                    // CRITICAL: We should NOT update the limit when merchants redeem!
+                                    // The limit represents the maximum offline spending allowed, which was set
+                                    // when the user deposited. When merchants redeem, the vault balance decreases,
+                                    // but the limit should stay the same because:
+                                    // 1. The user's offline spending limit doesn't change when merchants redeem
+                                    // 2. Updating the limit would cause double deduction (cumulative already accounts for spending)
+                                    // 3. The remaining balance calculation (limit - cumulative) already accounts for spending
+                                    //
+                                    // The limit should only be updated when:
+                                    // 1. User makes a new deposit (increases limit)
+                                    // 2. User hasn't spent anything yet (can reset limit to current vault balance)
+                                    //
+                                    // When merchants redeem, the vault balance decreases, but the limit stays the same.
+                                    // The remaining balance will be: limit - cumulative, which correctly shows
+                                    // how much the user can still spend offline.
+                                    android.util.Log.d("AppViewModel", "Merchant redeemed: vault balance decreased from $currentLimit to $limitInMicroUSDC, cumulative=$currentCumulative")
+                                    android.util.Log.d("AppViewModel", "⚠️ NOT updating limit (keeping at $currentLimit) to prevent double deduction")
+                                    android.util.Log.d("AppViewModel", "The limit represents max offline spending and doesn't change when merchants redeem")
+                                    android.util.Log.d("AppViewModel", "Remaining balance: $currentLimit - $currentCumulative = ${currentLimit - currentCumulative}")
                                 } else if (hasNoSpending) {
                                     android.util.Log.d("AppViewModel", "No spending yet, updating limit from $currentLimit to $limitInMicroUSDC")
                                     counterManager.updateLimit(limitInMicroUSDC)

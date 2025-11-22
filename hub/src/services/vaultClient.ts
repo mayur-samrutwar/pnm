@@ -6,6 +6,10 @@ export class VaultClient {
   private wallet: ethers.Wallet;
   private contract: ethers.Contract;
   private contractAddress: string;
+  // Transaction queue to ensure sequential processing and prevent nonce conflicts
+  private transactionQueue: Promise<any> = Promise.resolve();
+  // Mutex to ensure only one transaction is processed at a time
+  private transactionLock: Promise<void> = Promise.resolve();
 
   constructor(
     rpcUrl: string,
@@ -20,51 +24,81 @@ export class VaultClient {
   }
 
   /**
+   * Queue a transaction to ensure sequential processing
+   * This prevents nonce conflicts when multiple redemption requests come in concurrently
+   * Uses a mutex pattern to ensure only one transaction executes at a time
+   */
+  private async queueTransaction<T>(fn: () => Promise<T>): Promise<T> {
+    // Wait for the previous transaction to complete
+    await this.transactionLock;
+    
+    // Create a new lock that will be released when this transaction completes
+    let releaseLock: () => void;
+    this.transactionLock = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    
+    try {
+      // Execute the transaction
+      const result = await fn();
+      releaseLock!();
+      return result;
+    } catch (error) {
+      releaseLock!();
+      throw error;
+    }
+  }
+
+  /**
    * Redeem a voucher on-chain
    * @param voucher The voucher to redeem
    * @param signature The signature (can be same as voucher.signature or different)
    * @returns Transaction hash
    */
   async redeemVoucher(voucher: Voucher, signature: string): Promise<string> {
-    // Encode voucher payload (same format as in validator.ts)
-    const voucherPayload = ethers.AbiCoder.defaultAbiCoder().encode(
-      [
-        'address', // contractAddress
-        'uint256', // expiry
-        'uint256', // chainId
-        'address', // payerAddress
-        'address', // payeeAddress
-        'uint256', // amount
-        'uint256', // cumulative
-        'bytes32', // slipId
-      ],
-      [
-        voucher.contractAddress,
-        BigInt(voucher.expiry),
-        BigInt(voucher.chainId),
-        voucher.payerAddress,
-        voucher.payeeAddress,
-        BigInt(voucher.amount),
-        BigInt(voucher.cumulative),
-        ethers.id(voucher.slipId), // Convert UUID to bytes32
-      ]
-    );
+    // Queue the transaction to prevent nonce conflicts
+    return this.queueTransaction(async () => {
+      // Get current nonce before encoding (helps with debugging)
+      const currentNonce = await this.provider.getTransactionCount(this.wallet.address, 'pending');
+      console.log('[VaultClient] Current nonce for redeemVoucher:', currentNonce);
 
-    // Call redeemVoucher on the contract
-    // Note: Gas batching placeholder - in production, you could batch multiple transactions
-    const tx = await this.contract.redeemVoucher(voucherPayload, signature, {
-      // Gas batching placeholder: could add gas estimation and batching logic here
-      // For now, using default gas estimation
+      // Encode voucher payload (same format as in validator.ts)
+      const voucherPayload = ethers.AbiCoder.defaultAbiCoder().encode(
+        [
+          'address', // contractAddress
+          'uint256', // expiry
+          'uint256', // chainId
+          'address', // payerAddress
+          'address', // payeeAddress
+          'uint256', // amount
+          'uint256', // cumulative
+          'bytes32', // slipId
+        ],
+        [
+          voucher.contractAddress,
+          BigInt(voucher.expiry),
+          BigInt(voucher.chainId),
+          voucher.payerAddress,
+          voucher.payeeAddress,
+          BigInt(voucher.amount),
+          BigInt(voucher.cumulative),
+          ethers.id(voucher.slipId), // Convert UUID to bytes32
+        ]
+      );
+
+      // Call redeemVoucher on the contract
+      // Nonce will be handled automatically by ethers.js since we're queuing transactions
+      const tx = await this.contract.redeemVoucher(voucherPayload, signature);
+
+      // Wait for transaction to be mined
+      const receipt = await tx.wait();
+
+      if (!receipt) {
+        throw new Error('Transaction receipt not found');
+      }
+
+      return receipt.hash;
     });
-
-    // Wait for transaction to be mined
-    const receipt = await tx.wait();
-
-    if (!receipt) {
-      throw new Error('Transaction receipt not found');
-    }
-
-    return receipt.hash;
   }
 
   /**
@@ -78,60 +112,68 @@ export class VaultClient {
     console.log('[VaultClient] Contract address:', this.contractAddress);
     console.log('[VaultClient] Wallet address:', this.wallet.address);
     
-    try {
-      // Encode voucher payload (same format as redeemVoucher)
-      const voucherPayload = ethers.AbiCoder.defaultAbiCoder().encode(
-        [
-          'address', // contractAddress
-          'uint256', // expiry
-          'uint256', // chainId
-          'address', // payerAddress (Ethereum address where deposits are)
-          'address', // payeeAddress
-          'uint256', // amount
-          'uint256', // cumulative
-          'bytes32', // slipId
-        ],
-        [
-          voucher.contractAddress,
-          BigInt(voucher.expiry),
-          BigInt(voucher.chainId),
-          voucher.payerAddress, // This should be the Ethereum address
-          voucher.payeeAddress,
-          BigInt(voucher.amount),
-          BigInt(voucher.cumulative),
-          ethers.id(voucher.slipId), // Convert UUID to bytes32
-        ]
-      );
+    // Queue the transaction to prevent nonce conflicts
+    return this.queueTransaction(async () => {
+      try {
+        // Get current nonce before encoding (helps with debugging)
+        const currentNonce = await this.provider.getTransactionCount(this.wallet.address, 'pending');
+        console.log('[VaultClient] Current nonce:', currentNonce);
 
-      console.log('[VaultClient] Voucher payload encoded, length:', voucherPayload.length);
-      console.log('[VaultClient] Calling redeemVoucherByHub on contract...');
+        // Encode voucher payload (same format as redeemVoucher)
+        const voucherPayload = ethers.AbiCoder.defaultAbiCoder().encode(
+          [
+            'address', // contractAddress
+            'uint256', // expiry
+            'uint256', // chainId
+            'address', // payerAddress (Ethereum address where deposits are)
+            'address', // payeeAddress
+            'uint256', // amount
+            'uint256', // cumulative
+            'bytes32', // slipId
+          ],
+          [
+            voucher.contractAddress,
+            BigInt(voucher.expiry),
+            BigInt(voucher.chainId),
+            voucher.payerAddress, // This should be the Ethereum address
+            voucher.payeeAddress,
+            BigInt(voucher.amount),
+            BigInt(voucher.cumulative),
+            ethers.id(voucher.slipId), // Convert UUID to bytes32
+          ]
+        );
 
-      // Call redeemVoucherByHub on the contract (hub signs as owner)
-      const tx = await this.contract.redeemVoucherByHub(voucherPayload);
-      console.log('[VaultClient] Transaction sent, hash:', tx.hash);
-      console.log('[VaultClient] Waiting for transaction to be mined...');
+        console.log('[VaultClient] Voucher payload encoded, length:', voucherPayload.length);
+        console.log('[VaultClient] Calling redeemVoucherByHub on contract...');
 
-      // Wait for transaction to be mined
-      const receipt = await tx.wait();
-      console.log('[VaultClient] Transaction mined, block number:', receipt?.blockNumber);
+        // Call redeemVoucherByHub on the contract (hub signs as owner)
+        // Nonce will be handled automatically by ethers.js since we're queuing transactions
+        const tx = await this.contract.redeemVoucherByHub(voucherPayload);
+        console.log('[VaultClient] Transaction sent, hash:', tx.hash);
+        console.log('[VaultClient] Waiting for transaction to be mined...');
 
-      if (!receipt) {
-        throw new Error('Transaction receipt not found');
+        // Wait for transaction to be mined
+        const receipt = await tx.wait();
+        console.log('[VaultClient] Transaction mined, block number:', receipt?.blockNumber);
+
+        if (!receipt) {
+          throw new Error('Transaction receipt not found');
+        }
+
+        return receipt.hash;
+      } catch (error: any) {
+        console.error('[VaultClient] Error in redeemVoucherByHub:', error);
+        console.error('[VaultClient] Error message:', error.message);
+        console.error('[VaultClient] Error code:', error.code);
+        if (error.reason) {
+          console.error('[VaultClient] Error reason:', error.reason);
+        }
+        if (error.data) {
+          console.error('[VaultClient] Error data:', error.data);
+        }
+        throw error;
       }
-
-      return receipt.hash;
-    } catch (error: any) {
-      console.error('[VaultClient] Error in redeemVoucherByHub:', error);
-      console.error('[VaultClient] Error message:', error.message);
-      console.error('[VaultClient] Error code:', error.code);
-      if (error.reason) {
-        console.error('[VaultClient] Error reason:', error.reason);
-      }
-      if (error.data) {
-        console.error('[VaultClient] Error data:', error.data);
-      }
-      throw error;
-    }
+    });
   }
 
   /**

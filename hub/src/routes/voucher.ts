@@ -332,10 +332,12 @@ router.post('/redeem', async (req: Request, res: Response) => {
       });
     }
 
-    // Mark slip as used to prevent duplicate validation/redemption
+    // Only mark slip as used if redemption actually succeeded
     // If on-chain redemption failed, the slip will be marked as 'validated' status
     // and can be retried (the check above will allow retrying validated slips)
-    await db.markSlipUsed(voucher.slipId);
+    if (redemptionStatus === 'redeemed') {
+      await db.markSlipUsed(voucher.slipId);
+    }
 
     return res.status(200).json({
       status: redemptionStatus === 'redeemed' ? 'redeemed' : 'validated',
