@@ -15,6 +15,7 @@ import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.compose.runtime.collectAsState
 import com.google.zxing.BarcodeFormat
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -24,7 +25,6 @@ import com.pnm.mobileapp.data.model.SlipStatus
 import com.pnm.mobileapp.ui.viewmodel.MerchantViewModel
 import com.pnm.mobileapp.util.QRCodeUtils
 import com.pnm.mobileapp.util.VoucherValidator
-import kotlinx.coroutines.flow.collectAsState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
