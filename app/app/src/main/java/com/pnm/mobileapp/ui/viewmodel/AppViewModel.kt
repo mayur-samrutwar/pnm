@@ -3,6 +3,7 @@ package com.pnm.mobileapp.ui.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.pnm.mobileapp.crypto.CounterManager
 import com.pnm.mobileapp.crypto.Signer
 import com.pnm.mobileapp.data.model.Wallet
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -12,9 +13,23 @@ import java.security.KeyPair
 
 class AppViewModel(private val context: Context) : ViewModel() {
     private val signer = Signer(context)
+    private val counterManager = CounterManager(context)
     private val _wallet = MutableStateFlow<Wallet?>(null)
     val wallet: StateFlow<Wallet?> = _wallet
     private var keyPair: KeyPair? = null
+
+    private val _cumulative = MutableStateFlow(0L)
+    val cumulative: StateFlow<Long> = _cumulative
+
+    private val _counter = MutableStateFlow(0)
+    val counter: StateFlow<Int> = _counter
+
+    init {
+        viewModelScope.launch {
+            _cumulative.value = counterManager.getCumulative()
+            _counter.value = counterManager.getCounter()
+        }
+    }
 
     fun generateWallet() {
         viewModelScope.launch {
@@ -24,8 +39,30 @@ class AppViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    suspend fun signVoucher(voucherJson: String): String {
-        return signer.signVoucher(voucherJson, keyPair)
+    suspend fun initCounter(limit: Long) {
+        counterManager.initCounter(limit)
+        _cumulative.value = 0L
+        _counter.value = 0
+    }
+
+    suspend fun getCumulative(): Long {
+        val value = counterManager.getCumulative()
+        _cumulative.value = value
+        return value
+    }
+
+    suspend fun canSign(amount: Long): Boolean {
+        return counterManager.canSign(amount)
+    }
+
+    suspend fun signAndIncrement(voucherJson: String, amount: Long): String {
+        if (keyPair == null) {
+            throw IllegalStateException("Wallet not generated")
+        }
+        val signature = counterManager.signAndIncrement(voucherJson, amount, signer, keyPair!!)
+        _cumulative.value = counterManager.getCumulative()
+        _counter.value = counterManager.getCounter()
+        return signature
     }
 
     suspend fun getPublicKeyHex(): String {
