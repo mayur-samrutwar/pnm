@@ -292,7 +292,7 @@ fun MainContentScreen(
                         activity = activity
                     )
                     UserRole.MERCHANT -> {
-                        val wallet by appViewModel.wallet.collectAsState()
+                        val wallet by viewModel.wallet.collectAsState()
                         MerchantScreen(
                             viewModel = merchantViewModel,
                             merchantEthAddress = wallet?.ethAddress,

@@ -4,15 +4,22 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.compose.runtime.collectAsState
@@ -35,10 +42,8 @@ fun MerchantScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    var amount by remember { mutableStateOf("") }
-    var scannedSlip by remember { mutableStateOf<Slip?>(null) }
     var isOnline by remember { mutableStateOf(false) }
-    var selectedSlips by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var isSlipsExpanded by remember { mutableStateOf(true) }
     val syncResponse by viewModel.syncResponse.collectAsState()
     val pendingSlips by viewModel.pendingSlips.collectAsState(initial = emptyList())
 
@@ -75,7 +80,6 @@ fun MerchantScreen(
                 
                 // Save to Room database
                 viewModel.saveSlip(slip)
-                scannedSlip = slip
                 Toast.makeText(context, "Voucher scanned and saved", Toast.LENGTH_SHORT).show()
             }
         }
@@ -116,26 +120,10 @@ fun MerchantScreen(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
+            .padding(bottom = 80.dp), // Add bottom padding to avoid nav menu
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Amount Input
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("Amount", style = MaterialTheme.typography.headlineSmall)
-                OutlinedTextField(
-                    value = amount,
-                    onValueChange = { amount = it },
-                    label = { Text("Enter Amount") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
-
         // Scan QR Section
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(
@@ -149,25 +137,15 @@ fun MerchantScreen(
                 ) {
                     Text("Scan QR")
                 }
-                scannedSlip?.let { slip ->
-                    Text("Scanned Slip:", style = MaterialTheme.typography.labelLarge)
-                    Text("Slip ID: ${slip.slipId}")
-                    Text("Amount: ${slip.amount}")
-                    Text("Payer: ${slip.payer}")
-                    Text("Cumulative: ${slip.cumulative}")
-                    Text("Counter: ${slip.counter}")
-                }
             }
         }
 
-        // Sync with Hub Section
+        // Sync Controls Section (moved to top)
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text("Sync with Hub", style = MaterialTheme.typography.headlineSmall)
-                
                 // Warning if merchant address not configured
                 if (merchantEthAddress == null || merchantEthAddress.startsWith("0x0000") || merchantEthAddress.isEmpty()) {
                     Card(
@@ -190,6 +168,7 @@ fun MerchantScreen(
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
+                
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -200,74 +179,137 @@ fun MerchantScreen(
                     )
                     Text(if (isOnline) "Online (Validate)" else "Offline (Redeem)")
                 }
+                
+                // Sync button at the top
+                val pendingCount = pendingSlips.count { it.status == SlipStatus.PENDING }
                 Button(
                     onClick = {
-                        scannedSlip?.let {
-                            viewModel.syncWithHub(it, isOnline, merchantEthAddress)
+                        val pendingOnly = pendingSlips.filter { it.status == SlipStatus.PENDING }
+                        if (pendingOnly.isEmpty()) {
+                            Toast.makeText(context, "No pending slips to sync", Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.syncSelectedSlips(pendingOnly, isOnline, merchantEthAddress)
+                            Toast.makeText(context, "Syncing ${pendingOnly.size} slip(s)...", Toast.LENGTH_SHORT).show()
                         }
                     },
-                    enabled = scannedSlip != null,
+                    enabled = pendingCount > 0,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Sync with Hub")
+                    Text("Sync All Pending Slips (${pendingCount})")
                 }
+                
+                // Sync response
                 syncResponse?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium)
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (it.contains("Error")) {
+                                MaterialTheme.colorScheme.errorContainer
+                            } else {
+                                MaterialTheme.colorScheme.primaryContainer
+                            }
+                        )
+                    ) {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(12.dp),
+                            color = if (it.contains("Error")) {
+                                MaterialTheme.colorScheme.onErrorContainer
+                            } else {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            }
+                        )
+                    }
                 }
             }
         }
 
-        // Pending Slips List
+        // Collapsible Pending Slips List
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("Pending Slips (${pendingSlips.size})", style = MaterialTheme.typography.headlineSmall)
+                // Collapsible header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Pending Slips (${pendingSlips.size})",
+                        style = MaterialTheme.typography.headlineSmall
+                    )
+                    IconButton(
+                        onClick = { isSlipsExpanded = !isSlipsExpanded }
+                    ) {
+                        Icon(
+                            imageVector = if (isSlipsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = if (isSlipsExpanded) "Collapse" else "Expand"
+                        )
+                    }
+                }
                 
-                if (pendingSlips.isEmpty()) {
-                    Text("No pending slips", style = MaterialTheme.typography.bodyMedium)
-                } else {
-                    pendingSlips.forEach { slip ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("ID: ${slip.slipId.take(8)}...", style = MaterialTheme.typography.bodySmall)
-                                Text("Amount: ${slip.amount}", style = MaterialTheme.typography.bodyMedium)
-                                Text("Payer: ${slip.payer.take(10)}...", style = MaterialTheme.typography.bodySmall)
-                                Text("Status: ${slip.status}", style = MaterialTheme.typography.bodySmall)
-                            }
-                            Checkbox(
-                                checked = selectedSlips.contains(slip.id),
-                                onCheckedChange = {
-                                    selectedSlips = if (it) {
-                                        selectedSlips + slip.id
-                                    } else {
-                                        selectedSlips - slip.id
+                // Collapsible content
+                AnimatedVisibility(
+                    visible = isSlipsExpanded,
+                    enter = expandVertically(),
+                    exit = shrinkVertically()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (pendingSlips.isEmpty()) {
+                            Text("No pending slips", style = MaterialTheme.typography.bodyMedium)
+                        } else {
+                            // Show all pending slips
+                            pendingSlips.forEach { slip ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = when (slip.status) {
+                                            SlipStatus.PENDING -> MaterialTheme.colorScheme.surfaceVariant
+                                            SlipStatus.VALIDATED -> MaterialTheme.colorScheme.primaryContainer
+                                            SlipStatus.REDEEMED -> MaterialTheme.colorScheme.tertiaryContainer
+                                            SlipStatus.REJECTED -> MaterialTheme.colorScheme.errorContainer
+                                        }
+                                    )
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Text(
+                                            text = "ID: ${slip.slipId.take(8)}...",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        Text(
+                                            text = "Amount: ${slip.amount}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "Payer: ${slip.payer.take(10)}...${slip.payer.takeLast(6)}",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        Text(
+                                            text = "Status: ${slip.status}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = when (slip.status) {
+                                                SlipStatus.PENDING -> MaterialTheme.colorScheme.onSurfaceVariant
+                                                SlipStatus.VALIDATED -> MaterialTheme.colorScheme.onPrimaryContainer
+                                                SlipStatus.REDEEMED -> MaterialTheme.colorScheme.onTertiaryContainer
+                                                SlipStatus.REJECTED -> MaterialTheme.colorScheme.onErrorContainer
+                                            }
+                                        )
                                     }
                                 }
-                            )
-                        }
-                        Divider()
-                    }
-                    
-                    Button(
-                        onClick = {
-                            val slipsToSync = pendingSlips.filter { selectedSlips.contains(it.id) }
-                            if (slipsToSync.isEmpty()) {
-                                Toast.makeText(context, "No slips selected", Toast.LENGTH_SHORT).show()
-                            } else {
-                                viewModel.syncSelectedSlips(slipsToSync, isOnline, merchantEthAddress)
-                                selectedSlips = emptySet()
                             }
-                        },
-                        enabled = selectedSlips.isNotEmpty(),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Sync selected with Hub (${selectedSlips.size})")
+                        }
                     }
                 }
             }
