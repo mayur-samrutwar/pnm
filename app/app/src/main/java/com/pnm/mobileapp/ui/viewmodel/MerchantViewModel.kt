@@ -3,6 +3,8 @@ package com.pnm.mobileapp.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pnm.mobileapp.data.api.HubApiService
+import com.pnm.mobileapp.data.api.VoucherRequest
+import com.pnm.mobileapp.data.api.toHubVoucher
 import com.pnm.mobileapp.data.dao.PendingSlipDao
 import com.pnm.mobileapp.data.model.Slip
 import com.pnm.mobileapp.data.model.SlipStatus
@@ -27,25 +29,31 @@ class MerchantViewModel(
     fun syncWithHub(slip: Slip, isOnline: Boolean) {
         viewModelScope.launch {
             try {
+                // Convert Slip to HubVoucher and wrap in VoucherRequest
+                val hubVoucher = slip.toHubVoucher() // Merchant address can be passed if needed
+                val request = VoucherRequest(voucher = hubVoucher)
+                
                 if (isOnline) {
-                    val response = hubApiService.validateSlip(slip)
+                    val response = hubApiService.validateSlip(request)
                     _syncResponse.value = if (response.isSuccessful) {
                         // Update slip status
                         val updatedSlip = slip.copy(status = SlipStatus.VALIDATED)
                         pendingSlipDao.updateSlip(updatedSlip)
                         response.body()?.message ?: "Success"
                     } else {
-                        "Error: ${response.message()}"
+                        val errorBody = response.errorBody()?.string() ?: response.message()
+                        "Error: $errorBody"
                     }
                 } else {
-                    val response = hubApiService.redeemSlip(slip)
+                    val response = hubApiService.redeemSlip(request)
                     _syncResponse.value = if (response.isSuccessful) {
                         // Update slip status
                         val updatedSlip = slip.copy(status = SlipStatus.REDEEMED)
                         pendingSlipDao.updateSlip(updatedSlip)
                         response.body()?.message ?: "Success"
                     } else {
-                        "Error: ${response.message()}"
+                        val errorBody = response.errorBody()?.string() ?: response.message()
+                        "Error: $errorBody"
                     }
                 }
             } catch (e: Exception) {

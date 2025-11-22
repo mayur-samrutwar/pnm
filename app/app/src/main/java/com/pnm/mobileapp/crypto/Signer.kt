@@ -8,6 +8,7 @@ import com.pnm.mobileapp.secure.HardwareKeystoreManager
 import java.security.*
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
+import java.security.MessageDigest
 import java.security.spec.ECParameterSpec
 import java.security.spec.ECPoint
 import java.security.spec.ECPublicKeySpec
@@ -75,6 +76,25 @@ class Signer(private val context: Context) {
     private suspend fun getKeyPairFromKeystore(): KeyPair = withContext(Dispatchers.IO) {
         val privateKeyEntry = keyStore.getEntry(KEYSTORE_ALIAS, null) as KeyStore.PrivateKeyEntry
         KeyPair(privateKeyEntry.certificate.publicKey, privateKeyEntry.privateKey)
+    }
+
+    /**
+     * Get existing key pair from Keystore if it exists
+     * Returns null if no key is found
+     */
+    suspend fun getExistingKeyPair(): KeyPair? = withContext(Dispatchers.IO) {
+        try {
+            if (keyStore.containsAlias(KEYSTORE_ALIAS)) {
+                val privateKeyEntry = keyStore.getEntry(KEYSTORE_ALIAS, null) as? KeyStore.PrivateKeyEntry
+                if (privateKeyEntry != null) {
+                    return@withContext KeyPair(privateKeyEntry.certificate.publicKey, privateKeyEntry.privateKey)
+                }
+            }
+            null
+        } catch (e: Exception) {
+            Log.d(TAG, "No existing key found in Keystore: ${e.message}")
+            null
+        }
     }
 
     private fun isKeyStoreAvailable(): Boolean {
@@ -155,6 +175,35 @@ class Signer(private val context: Context) {
         // Uncompressed format: 0x04 || x || y (65 bytes total)
         val uncompressed = byteArrayOf(0x04) + x + y
         bytesToHex(uncompressed)
+    }
+
+    /**
+     * Derive Ethereum-style address from public key (hash and take last 20 bytes)
+     * This creates a 0x + 40 hex char address compatible with the deposit webhook
+     */
+    suspend fun deriveAddress(keyPair: KeyPair? = null): String = withContext(Dispatchers.IO) {
+        val publicKeyHex = exportPublicKeyHex(keyPair)
+        val publicKeyBytes = hexToBytes(publicKeyHex)
+        
+        // Hash public key using SHA-256
+        val messageDigest = MessageDigest.getInstance("SHA-256")
+        val hash = messageDigest.digest(publicKeyBytes)
+        
+        // Take last 20 bytes (40 hex chars) for Ethereum-style address
+        val addressBytes = hash.sliceArray(hash.size - 20 until hash.size)
+        return@withContext "0x" + bytesToHex(addressBytes)
+    }
+
+    private fun hexToBytes(hex: String): ByteArray {
+        val cleanHex = hex.removePrefix("0x")
+        val len = cleanHex.length
+        val data = ByteArray(len / 2)
+        var i = 0
+        while (i < len) {
+            data[i / 2] = ((Character.digit(cleanHex[i], 16) shl 4) + Character.digit(cleanHex[i + 1], 16)).toByte()
+            i += 2
+        }
+        return data
     }
 
     private suspend fun getOrGenerateKeyPair(): KeyPair {

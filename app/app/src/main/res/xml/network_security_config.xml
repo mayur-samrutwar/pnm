@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Allow cleartext (HTTP) traffic for development -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.0.2.2</domain> <!-- Emulator localhost -->
+        <domain includeSubdomains="true">10.0.5.171</domain> <!-- Your computer's IP for physical device -->
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+    </domain-config>
+    <!-- For production, you can add specific domains here with cleartextTrafficPermitted="false" -->
+</network-security-config>
+

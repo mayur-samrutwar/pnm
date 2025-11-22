@@ -10,6 +10,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.google.gson.Gson
 import com.pnm.mobileapp.data.api.HubApiService
+import com.pnm.mobileapp.data.api.VoucherRequest
+import com.pnm.mobileapp.data.api.toHubVoucher
 import com.pnm.mobileapp.data.model.Slip
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -56,11 +58,15 @@ fun HubScreen(
                             val slip = gson.fromJson(validateInput, Slip::class.java)
                             CoroutineScope(Dispatchers.Main).launch {
                                 try {
-                                    val response = hubApiService.validateSlip(slip)
+                                    // Convert Slip to VoucherRequest
+                                    val hubVoucher = slip.toHubVoucher()
+                                    val request = VoucherRequest(voucher = hubVoucher)
+                                    val response = hubApiService.validateSlip(request)
                                     validateResponse = if (response.isSuccessful) {
                                         response.body()?.message ?: "Success"
                                     } else {
-                                        "Error: ${response.message()}"
+                                        val errorBody = response.errorBody()?.string() ?: response.message()
+                                        "Error: $errorBody"
                                     }
                                 } catch (e: Exception) {
                                     validateResponse = "Error: ${e.message}"
@@ -100,11 +106,15 @@ fun HubScreen(
                             val slip = gson.fromJson(redeemInput, Slip::class.java)
                             CoroutineScope(Dispatchers.Main).launch {
                                 try {
-                                    val response = hubApiService.redeemSlip(slip)
+                                    // Convert Slip to VoucherRequest
+                                    val hubVoucher = slip.toHubVoucher()
+                                    val request = VoucherRequest(voucher = hubVoucher)
+                                    val response = hubApiService.redeemSlip(request)
                                     redeemResponse = if (response.isSuccessful) {
                                         response.body()?.message ?: "Success"
                                     } else {
-                                        "Error: ${response.message()}"
+                                        val errorBody = response.errorBody()?.string() ?: response.message()
+                                        "Error: $errorBody"
                                     }
                                 } catch (e: Exception) {
                                     redeemResponse = "Error: ${e.message}"

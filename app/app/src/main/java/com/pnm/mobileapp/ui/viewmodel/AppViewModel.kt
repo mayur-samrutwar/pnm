@@ -36,6 +36,26 @@ class AppViewModel(private val context: Context) : ViewModel() {
         viewModelScope.launch {
             _cumulative.value = counterManager.getCumulative()
             _counter.value = counterManager.getCounter()
+            // Try to load existing wallet from Keystore
+            loadExistingWallet()
+        }
+    }
+
+    /**
+     * Load existing wallet from Android Keystore if it exists
+     */
+    private suspend fun loadExistingWallet() {
+        try {
+            // Check if key exists in Keystore
+            val existingKeyPair = signer.getExistingKeyPair()
+            if (existingKeyPair != null) {
+                keyPair = existingKeyPair
+                val address = signer.deriveAddress(existingKeyPair)
+                _wallet.value = Wallet(existingKeyPair, address)
+            }
+        } catch (e: Exception) {
+            // No existing wallet found, user needs to generate one
+            // This is expected on first launch
         }
     }
 
@@ -55,8 +75,8 @@ class AppViewModel(private val context: Context) : ViewModel() {
             }
             
             keyPair = signer.generateKeyPair()
-            val publicKeyHex = signer.exportPublicKeyHex(keyPair)
-            _wallet.value = Wallet(keyPair!!, publicKeyHex)
+            val address = signer.deriveAddress(keyPair)
+            _wallet.value = Wallet(keyPair!!, address)
         }
     }
 
