@@ -13,13 +13,14 @@ object Constants {
     const val CHAIN_ID = CHAIN_ID_BASE_SEPOLIA // Default to Base Sepolia
     
     // Base Sepolia Configuration
-    const val VAULT_CONTRACT_ADDRESS_BASE_SEPOLIA = "0x9251b4c1ea6e19178870208e5d92e724FC5A4B79"
+    const val VAULT_CONTRACT_ADDRESS_BASE_SEPOLIA = "0xE117E383ad4C7997cB570F83e9c2330B7DA5d6bD"
     const val USDC_TOKEN_CONTRACT_BASE_SEPOLIA = "0x036CbD53842c5426634e7929541eC2318f3dCF7e" // Native USDC
     const val RPC_URL_BASE_SEPOLIA = "${HUB_BASE_URL}/api/v1/rpc" // RPC proxy through hub server
     const val RPC_URL_BASE_SEPOLIA_DIRECT = "https://sepolia.base.org" // Direct RPC for nonce checks (more reliable)
+    const val RPC_URL_ETHEREUM_SEPOLIA_DIRECT = "https://sepolia.drpc.org" // Direct RPC for Ethereum Sepolia nonce checks
     
     // Ethereum Sepolia Configuration
-    const val VAULT_CONTRACT_ADDRESS_ETHEREUM_SEPOLIA = "0x0983966A5bCcE66cb3F488BB04A5198e799A2dB3"
+    const val VAULT_CONTRACT_ADDRESS_ETHEREUM_SEPOLIA = "0x5B3E85350c58F46690d016803a7a083594E7c182"
     const val USDC_TOKEN_CONTRACT_ETHEREUM_SEPOLIA = "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" // Native USDC
     const val RPC_URL_ETHEREUM_SEPOLIA = "${HUB_BASE_URL}/api/v1/rpc" // RPC proxy through hub server
     
@@ -58,6 +59,17 @@ object Constants {
             CHAIN_ID_BASE_SEPOLIA -> RPC_URL_BASE_SEPOLIA
             CHAIN_ID_ETHEREUM_SEPOLIA -> RPC_URL_ETHEREUM_SEPOLIA
             else -> RPC_URL_BASE_SEPOLIA // Default to Base Sepolia
+        }
+    }
+    
+    /**
+     * Get direct RPC URL for nonce checks (bypasses proxy for reliability)
+     */
+    fun getDirectRpcUrl(chainId: Int): String {
+        return when (chainId) {
+            CHAIN_ID_BASE_SEPOLIA -> RPC_URL_BASE_SEPOLIA_DIRECT
+            CHAIN_ID_ETHEREUM_SEPOLIA -> RPC_URL_ETHEREUM_SEPOLIA_DIRECT
+            else -> RPC_URL_BASE_SEPOLIA_DIRECT // Default to Base Sepolia
         }
     }
     

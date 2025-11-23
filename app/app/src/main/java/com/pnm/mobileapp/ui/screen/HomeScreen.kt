@@ -29,6 +29,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import com.pnm.mobileapp.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,11 +41,13 @@ import com.pnm.mobileapp.data.model.Slip
 import com.pnm.mobileapp.data.model.Voucher
 import com.pnm.mobileapp.ui.component.SoftwareFallbackBanner
 import com.pnm.mobileapp.ui.viewmodel.AppViewModel
+import com.pnm.mobileapp.util.Constants
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.UUID
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     viewModel: AppViewModel,
@@ -641,6 +645,9 @@ fun HomeScreen(
             var depositAmountInput by remember { mutableStateOf("") }
             var isDepositing by remember { mutableStateOf(false) }
             var depositError by remember { mutableStateOf<String?>(null) }
+            var selectedChainId by remember { mutableStateOf<Int>(Constants.CHAIN_ID_BASE_SEPOLIA) }
+            var chainDropdownExpanded by remember { mutableStateOf(false) }
+            val supportedChains: List<Int> = Constants.getSupportedChainIds()
             
             Dialog(
                 onDismissRequest = { 
@@ -749,6 +756,51 @@ fun HomeScreen(
                             )
                         )
                         
+                        // Chain Selection
+                        ExposedDropdownMenuBox(
+                            expanded = chainDropdownExpanded,
+                            onExpandedChange = { chainDropdownExpanded = it }
+                        ) {
+                            OutlinedTextField(
+                                value = Constants.getChainName(selectedChainId),
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Deposit to Chain") },
+                                trailingIcon = { 
+                                    ExposedDropdownMenuDefaults.TrailingIcon(
+                                        expanded = chainDropdownExpanded
+                                    ) 
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .menuAnchor(),
+                                enabled = !isDepositing,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color(0xFF10B981),
+                                    unfocusedBorderColor = Color(0xFFE2E8F0),
+                                    focusedLabelColor = Color(0xFF10B981),
+                                    unfocusedLabelColor = Color(0xFF64748B),
+                                    disabledBorderColor = Color(0xFFE2E8F0),
+                                    disabledLabelColor = Color(0xFF94A3B8)
+                                )
+                            )
+                            ExposedDropdownMenu(
+                                expanded = chainDropdownExpanded,
+                                onDismissRequest = { chainDropdownExpanded = false }
+                            ) {
+                                supportedChains.forEach { chainId ->
+                                    DropdownMenuItem(
+                                        text = { Text(Constants.getChainName(chainId)) },
+                                        onClick = {
+                                            selectedChainId = chainId
+                                            chainDropdownExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        
                         // Available Balance
                         if (usdcBalance != null) {
                             Row(
@@ -809,12 +861,13 @@ fun HomeScreen(
                                     depositError = null
                                     
                                     CoroutineScope(Dispatchers.Main).launch {
-                                        val result = viewModel.depositToVault(amount)
+                                        val result = viewModel.depositToVault(amount, selectedChainId)
                                         if (result.isSuccess) {
                                             showDepositDialog = false
                                             depositAmountInput = ""
                                             Toast.makeText(context, result.getOrNull() ?: "Deposit successful", Toast.LENGTH_LONG).show()
                                             viewModel.fetchUSDCBalance()
+                                            viewModel.fetchVaultBalance() // Refresh vault balance after deposit
                                         } else {
                                             depositError = result.exceptionOrNull()?.message ?: "Deposit failed"
                                             isDepositing = false

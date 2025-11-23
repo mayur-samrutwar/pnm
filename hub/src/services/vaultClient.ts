@@ -178,7 +178,7 @@ export class VaultClient {
             BigInt(voucher.cumulative),
             ethers.id(voucher.slipId), // Convert UUID to bytes32
           ]
-    );
+        );
 
         console.log('[VaultClient] Voucher payload encoded, length:', voucherPayload.length);
         console.log('[VaultClient] Calling redeemVoucherByHub on contract...');

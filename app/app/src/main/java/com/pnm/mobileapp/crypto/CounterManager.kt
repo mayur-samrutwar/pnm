@@ -68,11 +68,16 @@ class CounterManager(private val context: Context) {
         
         // Fallback to encrypted SharedPreferences
         useHardwareCounter = false
-        encryptedPrefs.edit()
+        // Use commit() instead of apply() to ensure synchronous write
+        val editor = encryptedPrefs.edit()
             .putLong(KEY_OFFLINE_LIMIT, limit)
             .putLong(KEY_CUMULATIVE, 0L)
             .putInt(KEY_COUNTER, 0)
-            .apply()
+        val committed = editor.commit() // commit() is synchronous, apply() is async
+        
+        if (!committed) {
+            Log.e(TAG, "❌ Failed to commit limit to encrypted prefs!")
+        }
         
         // Verify it was saved correctly
         val savedLimit = encryptedPrefs.getLong(KEY_OFFLINE_LIMIT, 0L)
@@ -80,6 +85,15 @@ class CounterManager(private val context: Context) {
             Log.d(TAG, "✅ Fallback: Encrypted prefs limit initialized: $savedLimit (${savedLimit / 1_000_000.0} USDC)")
         } else {
             Log.e(TAG, "❌ Fallback: Failed to save limit! Expected: $limit, Got: $savedLimit")
+            Log.e(TAG, "This may indicate a storage issue. Trying to force save again...")
+            // Try one more time with commit
+            encryptedPrefs.edit().putLong(KEY_OFFLINE_LIMIT, limit).commit()
+            val retryLimit = encryptedPrefs.getLong(KEY_OFFLINE_LIMIT, 0L)
+            if (retryLimit == limit) {
+                Log.d(TAG, "✅ Retry succeeded: limit saved correctly")
+            } else {
+                Log.e(TAG, "❌ Retry also failed! Limit: $retryLimit")
+            }
         }
     }
 

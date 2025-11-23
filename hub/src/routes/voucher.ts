@@ -257,30 +257,64 @@ router.post('/redeem', async (req: Request, res: Response) => {
         const depositsOnTarget = await bridge.getDepositBalance(targetChainId, voucher.payerAddress);
         console.log('[REDEEM] Deposits on target chain:', ethers.formatUnits(depositsOnTarget, 6), 'USDC');
         
-        const requiredAmount = BigInt(voucher.cumulative);
+        // The contract now checks: deposits >= amount (not cumulative)
+        // It also checks cumulative >= maxRedeemedCumulative to ensure vouchers are redeemed in order
+        const voucherAmount = BigInt(voucher.amount);
+        const voucherCumulative = BigInt(voucher.cumulative);
+        
+        console.log('[REDEEM] Voucher amount (to redeem):', ethers.formatUnits(voucherAmount, 6), 'USDC');
+        console.log('[REDEEM] Voucher cumulative:', ethers.formatUnits(voucherCumulative, 6), 'USDC');
+        
+        // Check if we have enough deposits to cover this voucher's amount
         let needsBridging = false;
         let sourceChainId: number | null = null;
-        
-        if (depositsOnTarget < requiredAmount) {
-          // Step 2: Find chain with sufficient deposits
-          console.log('[REDEEM] Insufficient deposits on target chain, searching other chains...');
-          sourceChainId = await bridge.findChainWithDeposits(voucher.payerAddress, requiredAmount);
+        let amountToBridge = BigInt(0);
           
-          if (!sourceChainId) {
+        if (depositsOnTarget < voucherAmount) {
+          // Step 2: Calculate how much we need to bridge
+          const shortfall = voucherAmount - depositsOnTarget;
+          console.log('[REDEEM] Shortfall on target chain:', ethers.formatUnits(shortfall, 6), 'USDC');
+          
+          // Find chain with deposits to bridge from
+          const supportedChains = ChainRegistry.getSupportedChainIds();
+          let bestSourceChain: number | null = null;
+          let maxAvailable = BigInt(0);
+          
+          for (const chainId of supportedChains) {
+            if (chainId === targetChainId) continue; // Skip target chain
+            
+            try {
+              const balance = await bridge.getDepositBalance(chainId, voucher.payerAddress);
+              if (balance > maxAvailable) {
+                maxAvailable = balance;
+                bestSourceChain = chainId;
+              }
+              console.log(`[REDEEM] Deposits on chain ${chainId}:`, ethers.formatUnits(balance, 6), 'USDC');
+            } catch (error) {
+              console.warn(`[REDEEM] Failed to check balance on chain ${chainId}:`, error);
+            }
+          }
+          
+          if (!bestSourceChain || maxAvailable === BigInt(0)) {
             return res.status(400).json({
               status: 'error',
-              reason: `Insufficient deposits across all chains. Required: ${ethers.formatUnits(requiredAmount, 6)} USDC`,
+              reason: `Insufficient deposits to redeem voucher. Required: ${ethers.formatUnits(voucherAmount, 6)} USDC, Available on target chain: ${ethers.formatUnits(depositsOnTarget, 6)} USDC, No deposits found on other chains.`,
             });
           }
           
-          console.log('[REDEEM] Found deposits on chain:', sourceChainId);
+          // Bridge the shortfall amount (or as much as available, whichever is less)
+          amountToBridge = shortfall < maxAvailable ? shortfall : maxAvailable;
+          sourceChainId = bestSourceChain;
           needsBridging = true;
+          
+          console.log('[REDEEM] Found source chain:', sourceChainId, 'with', ethers.formatUnits(maxAvailable, 6), 'USDC');
+          console.log('[REDEEM] Will bridge:', ethers.formatUnits(amountToBridge, 6), 'USDC');
         }
         
         // Step 3: Bridge funds if needed
-        if (needsBridging && sourceChainId) {
+        if (needsBridging && sourceChainId && amountToBridge > 0) {
           console.log('[REDEEM] Bridging funds from chain', sourceChainId, 'to', targetChainId);
-          
+            
           // Get VaultClient for source chain to withdraw
           const sourceConfig = ChainRegistry.getChainConfig(sourceChainId)!;
           const sourceClient = VaultClient.createForChain(
@@ -295,20 +329,27 @@ router.post('/redeem', async (req: Request, res: Response) => {
             throw new Error(`No native USDC address for chain ${sourceChainId}`);
           }
           
-          // Withdraw from source chain Vault
-          console.log('[REDEEM] Withdrawing from Vault on source chain...');
-          const withdrawTxHash = await sourceClient.withdraw(nativeUSDC, requiredAmount);
+          // Get actual available balance on source chain
+          const depositsOnSource = await bridge.getDepositBalance(sourceChainId, voucher.payerAddress);
+          const actualBridgeAmount = amountToBridge < depositsOnSource ? amountToBridge : depositsOnSource;
+          
+          console.log('[REDEEM] Deposits on source chain:', ethers.formatUnits(depositsOnSource, 6), 'USDC');
+          console.log('[REDEEM] Withdrawing', ethers.formatUnits(actualBridgeAmount, 6), 'USDC from Vault on source chain...');
+          
+          // Withdraw from source chain Vault - only withdraw what we need to bridge
+          const withdrawTxHash = await sourceClient.withdraw(nativeUSDC, actualBridgeAmount);
           console.log('[REDEEM] Withdrawn from Vault:', withdrawTxHash);
           
           // Wait for withdrawal to be confirmed
           await new Promise(resolve => setTimeout(resolve, 3000));
           
-          // Bridge USDC
+          // Bridge USDC - bridge the actual amount withdrawn
+          console.log('[REDEEM] Bridging', ethers.formatUnits(actualBridgeAmount, 6), 'USDC...');
           const bridgeResult = await bridge.bridgeUSDC(
             sourceChainId,
             targetChainId,
             voucher.payerAddress,
-            requiredAmount
+            actualBridgeAmount
           );
           
           bridgeInfo = {
@@ -330,7 +371,7 @@ router.post('/redeem', async (req: Request, res: Response) => {
           
           if (!bridgeConfirmed) {
             console.warn('[REDEEM] Bridge confirmation timeout, but continuing...');
-          }
+              }
           
           console.log('[REDEEM] Bridge confirmed, proceeding with redemption...');
         }
@@ -357,8 +398,8 @@ router.post('/redeem', async (req: Request, res: Response) => {
           };
           
           txHash = await targetClient.redeemVoucherByHub(voucherWithChain, targetChainId);
-          console.log('[REDEEM] ✅ P-256 voucher redeemed on-chain successfully. Transaction hash:', txHash);
-      } else {
+            console.log('[REDEEM] ✅ P-256 voucher redeemed on-chain successfully. Transaction hash:', txHash);
+          } else {
           // Secp256k1 voucher
           const targetConfig = ChainRegistry.getChainConfig(targetChainId)!;
           const voucherWithChain = {
@@ -368,15 +409,15 @@ router.post('/redeem', async (req: Request, res: Response) => {
           };
           
           txHash = await targetClient.redeemVoucher(voucherWithChain, voucher.signature);
-          console.log('[REDEEM] ✅ On-chain redemption successful. Transaction hash:', txHash);
+            console.log('[REDEEM] ✅ On-chain redemption successful. Transaction hash:', txHash);
         }
         
-        redemptionStatus = 'redeemed';
-      } catch (error: any) {
+            redemptionStatus = 'redeemed';
+        } catch (error: any) {
         console.error('[REDEEM] ❌ Error in multichain redemption:', error);
-        console.error('[REDEEM] Error message:', error.message);
-        console.error('[REDEEM] Error stack:', error.stack);
-        
+          console.error('[REDEEM] Error message:', error.message);
+          console.error('[REDEEM] Error stack:', error.stack);
+          
         redemptionStatus = 'validated';
       }
       } else {
@@ -473,7 +514,8 @@ router.post('/depositWebhook', async (req: Request, res: Response) => {
 /**
  * GET /api/v1/vaultBalance/:address
  * Get vault deposit balance for a user address
- * Supports multichain: accepts chainId query parameter
+ * Supports multichain: accepts chainId query parameter (defaults to combined balance from all chains)
+ * If chainId is not provided, returns combined balance from all supported chains
  */
 router.get('/vaultBalance/:address', async (req: Request, res: Response) => {
   try {
@@ -489,40 +531,32 @@ router.get('/vaultBalance/:address', async (req: Request, res: Response) => {
       });
     }
 
-    // Determine chain to query
-    let targetChainId: number;
+    // If chainId is provided, return balance for that specific chain
     if (chainId && ChainRegistry.isChainSupported(chainId)) {
-      targetChainId = chainId;
-    } else {
-      // Default to first supported chain or use env
-      const supportedChains = ChainRegistry.getSupportedChainIds();
-      targetChainId = supportedChains[0] || 84532; // Default to Base Sepolia
-    }
-
-    const config = ChainRegistry.getChainConfig(targetChainId);
-    if (!config || !config.vaultAddress || !config.rpcUrl) {
+      const config = ChainRegistry.getChainConfig(chainId);
+      if (!config || !config.vaultAddress || !config.rpcUrl) {
       return res.status(500).json({
         status: 'error',
-        reason: `Chain configuration missing for chain ${targetChainId}`,
+          reason: `Chain configuration missing for chain ${chainId}`,
       });
     }
 
     // Get vault deposit balance
-    const provider = new ethers.JsonRpcProvider(config.rpcUrl);
+      const provider = new ethers.JsonRpcProvider(config.rpcUrl);
     const vaultAbi = ['function deposits(address) external view returns (uint256)'];
-    const vaultContract = new ethers.Contract(config.vaultAddress, vaultAbi, provider);
+      const vaultContract = new ethers.Contract(config.vaultAddress, vaultAbi, provider);
     
-    console.log(`[vaultBalance] Querying vault ${config.vaultAddress} on chain ${targetChainId} for address ${address}`);
+      console.log(`[vaultBalance] Querying vault ${config.vaultAddress} on chain ${chainId} for address ${address}`);
     const depositBalance = await vaultContract.deposits(address);
     const depositBalanceStr = depositBalance.toString();
     console.log(`[vaultBalance] Raw balance: ${depositBalanceStr}`);
     
-    // Get token decimals (USDC has 6 decimals)
-    let decimals = 6;
-    if (config.nativeUSDCAddress) {
+      // Get token decimals (USDC has 6 decimals)
+      let decimals = 6;
+      if (config.nativeUSDCAddress) {
       try {
         const erc20Abi = ['function decimals() external view returns (uint8)'];
-        const tokenContract = new ethers.Contract(config.nativeUSDCAddress, erc20Abi, provider);
+          const tokenContract = new ethers.Contract(config.nativeUSDCAddress, erc20Abi, provider);
         decimals = Number(await tokenContract.decimals());
       } catch (e) {
         console.warn('Could not fetch token decimals, using default 6');
@@ -536,7 +570,72 @@ router.get('/vaultBalance/:address', async (req: Request, res: Response) => {
       balance: depositBalanceStr,
       balanceFormatted: depositFormatted,
       decimals: decimals,
-      chainId: targetChainId,
+        chainId: chainId,
+      });
+    }
+
+    // If no chainId provided, fetch combined balance from all supported chains
+    const supportedChains = ChainRegistry.getSupportedChainIds();
+    let totalBalance = BigInt(0);
+    const balancesByChain: Array<{ chainId: number; balance: string; balanceFormatted: string }> = [];
+    let decimals = 6; // Default USDC decimals
+
+    console.log(`[vaultBalance] Fetching combined vault balance from all chains for address ${address}`);
+
+    for (const chainId of supportedChains) {
+      try {
+        const config = ChainRegistry.getChainConfig(chainId);
+        if (!config || !config.vaultAddress || !config.rpcUrl) {
+          console.warn(`[vaultBalance] Skipping chain ${chainId}: configuration missing`);
+          continue;
+        }
+
+        const provider = new ethers.JsonRpcProvider(config.rpcUrl);
+        const vaultAbi = ['function deposits(address) external view returns (uint256)'];
+        const vaultContract = new ethers.Contract(config.vaultAddress, vaultAbi, provider);
+        
+        console.log(`[vaultBalance] Querying vault ${config.vaultAddress} on chain ${chainId} for address ${address}`);
+        const depositBalance = await vaultContract.deposits(address);
+        
+        // Get token decimals (USDC has 6 decimals)
+        let chainDecimals = 6;
+        if (config.nativeUSDCAddress) {
+          try {
+            const erc20Abi = ['function decimals() external view returns (uint8)'];
+            const tokenContract = new ethers.Contract(config.nativeUSDCAddress, erc20Abi, provider);
+            chainDecimals = Number(await tokenContract.decimals());
+          } catch (e) {
+            console.warn(`[vaultBalance] Could not fetch token decimals for chain ${chainId}, using default 6`);
+          }
+        }
+        decimals = chainDecimals; // Use decimals from first chain (should be same for USDC)
+        
+        const balanceFormatted = ethers.formatUnits(depositBalance, decimals);
+        totalBalance += depositBalance;
+        
+        balancesByChain.push({
+          chainId: chainId,
+          balance: depositBalance.toString(),
+          balanceFormatted: balanceFormatted,
+        });
+        
+        console.log(`[vaultBalance] Chain ${chainId}: ${balanceFormatted} USDC`);
+      } catch (error: any) {
+        console.error(`[vaultBalance] Error fetching vault balance from chain ${chainId}:`, error.message);
+        // Continue with other chains even if one fails
+      }
+    }
+
+    const totalBalanceFormatted = ethers.formatUnits(totalBalance, decimals);
+    console.log(`[vaultBalance] Combined vault balance: ${totalBalanceFormatted} USDC across ${balancesByChain.length} chains`);
+
+    return res.status(200).json({
+      status: 'success',
+      balance: totalBalance.toString(),
+      balanceFormatted: totalBalanceFormatted,
+      decimals: decimals,
+      chainId: null, // null indicates combined balance
+      balancesByChain: balancesByChain,
     });
   } catch (error) {
     console.error('Error getting vault balance:', error);
@@ -571,38 +670,38 @@ router.get('/balance/:address', async (req: Request, res: Response) => {
     if (chainId && ChainRegistry.isChainSupported(chainId)) {
       const config = ChainRegistry.getChainConfig(chainId);
       if (!config || !config.nativeUSDCAddress || !config.rpcUrl) {
-        return res.status(500).json({
-          status: 'error',
+      return res.status(500).json({
+        status: 'error',
           reason: `Chain configuration missing for chain ${chainId}`,
-        });
-      }
+      });
+    }
 
       // Use native USDC address for the chain
       const tokenAddress = config.nativeUSDCAddress;
       const rpcUrl = config.rpcUrl;
 
       // Query token balance directly
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const erc20Abi = ['function balanceOf(address owner) external view returns (uint256)', 'function decimals() external view returns (uint8)'];
-      const tokenContract = new ethers.Contract(tokenAddress, erc20Abi, provider);
-      
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const erc20Abi = ['function balanceOf(address owner) external view returns (uint256)', 'function decimals() external view returns (uint8)'];
+    const tokenContract = new ethers.Contract(tokenAddress, erc20Abi, provider);
+    
       console.log(`[balance] Querying USDC balance on chain ${chainId} for address ${address}`);
-      const balance = await tokenContract.balanceOf(address);
-      const decimals = await tokenContract.decimals();
-      
-      // Convert BigInt to string for JSON serialization
-      const balanceStr = balance.toString();
-      const decimalsNum = Number(decimals);
-      const balanceFormatted = ethers.formatUnits(balance, decimalsNum);
+    const balance = await tokenContract.balanceOf(address);
+    const decimals = await tokenContract.decimals();
+    
+    // Convert BigInt to string for JSON serialization
+    const balanceStr = balance.toString();
+    const decimalsNum = Number(decimals);
+    const balanceFormatted = ethers.formatUnits(balance, decimalsNum);
       
       console.log(`[balance] Balance: ${balanceFormatted} USDC on chain ${chainId}`);
-      
-      return res.status(200).json({
-        status: 'success',
-        balance: balanceStr,
-        balanceFormatted: balanceFormatted,
-        decimals: decimalsNum,
-        tokenAddress: tokenAddress,
+    
+    return res.status(200).json({
+      status: 'success',
+      balance: balanceStr,
+      balanceFormatted: balanceFormatted,
+      decimals: decimalsNum,
+      tokenAddress: tokenAddress,
         chainId: chainId,
       });
     }
@@ -742,7 +841,11 @@ router.post('/deposit', async (req: Request, res: Response) => {
       const handleTransaction = async (signedTx: string, txType: string): Promise<string> => {
         try {
           const tx = await provider.broadcastTransaction(signedTx);
-          await tx.wait();
+          // Wait for transaction with 3 minute timeout
+          await Promise.race([
+            tx.wait(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Transaction timeout')), 180000))
+          ]);
           console.log(`[DEPOSIT] ${txType} transaction confirmed:`, tx.hash);
           return tx.hash;
         } catch (error: any) {
@@ -764,7 +867,7 @@ router.post('/deposit', async (req: Request, res: Response) => {
                 console.log(`[DEPOSIT] Found existing ${txType} transaction, waiting for confirmation...`);
                 const receipt = await Promise.race([
                   provider.waitForTransaction(txHash),
-                  new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 60000))
+                  new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 180000)) // 3 minutes timeout
                 ]) as ethers.TransactionReceipt;
                 
                 if (receipt) {
@@ -776,7 +879,10 @@ router.post('/deposit', async (req: Request, res: Response) => {
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 const retryTx = await provider.getTransaction(txHash);
                 if (retryTx) {
-                  const receipt = await provider.waitForTransaction(txHash);
+                  const receipt = await Promise.race([
+                    provider.waitForTransaction(txHash),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 180000)) // 3 minutes timeout
+                  ]) as ethers.TransactionReceipt;
                   if (receipt) {
                     console.log(`[DEPOSIT] ${txType} transaction confirmed:`, txHash);
                     return txHash;
@@ -812,7 +918,7 @@ router.post('/deposit', async (req: Request, res: Response) => {
                 // Wait for the pending transaction to be mined
                 // We'll poll for the nonce to increase
                 let attempts = 0;
-                while (attempts < 30) { // Wait up to 30 seconds
+                while (attempts < 120) { // Wait up to 2 minutes (120 seconds)
                   await new Promise(resolve => setTimeout(resolve, 1000));
                   const currentNonce = await provider.getTransactionCount(fromAddress, 'pending');
                   if (currentNonce > nonce) {

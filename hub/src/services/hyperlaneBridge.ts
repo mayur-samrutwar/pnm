@@ -112,8 +112,19 @@ export class HyperlaneBridge {
     let messageFee = 0n;
     try {
       messageFee = await mailbox.quoteDispatch(targetDomainId, messageBody);
-    } catch (error) {
-      console.warn('Could not quote message fee, using 0:', error);
+      console.log(`[HyperlaneBridge] Quoted message fee: ${ethers.formatEther(messageFee)} ETH`);
+    } catch (error: any) {
+      console.error('[HyperlaneBridge] Failed to quote message fee:', error.message);
+      // Check wallet balance
+      const balance = await wallet.provider.getBalance(wallet.address);
+      console.log(`[HyperlaneBridge] Wallet balance: ${ethers.formatEther(balance)} ETH`);
+      if (balance === 0n) {
+        throw new Error(`Hub wallet has no ETH on chain ${sourceChainId}. Need ETH to pay Hyperlane fees. Please fund the hub wallet: ${wallet.address}`);
+      }
+      // For testnet, Hyperlane fees are typically very small (~0.0001 ETH)
+      // Use a reasonable fallback that should cover the fee
+      messageFee = ethers.parseEther('0.0001');
+      console.warn(`[HyperlaneBridge] Using fallback message fee: ${ethers.formatEther(messageFee)} ETH`);
     }
 
     // Send message
@@ -139,8 +150,18 @@ export class HyperlaneBridge {
     let transferFee = 0n;
     try {
       transferFee = await warpRoute.quoteTransferRemote(targetDomainId);
-    } catch (error) {
-      console.warn('Could not quote transfer fee, using 0:', error);
+      console.log(`[HyperlaneBridge] Quoted transfer fee: ${ethers.formatEther(transferFee)} ETH`);
+    } catch (error: any) {
+      console.error('[HyperlaneBridge] Failed to quote transfer fee:', error.message);
+      // Check wallet balance
+      const balance = await wallet.provider.getBalance(wallet.address);
+      console.log(`[HyperlaneBridge] Wallet balance: ${ethers.formatEther(balance)} ETH`);
+      if (balance === 0n) {
+        throw new Error(`Hub wallet has no ETH on chain ${sourceChainId}. Need ETH to pay Hyperlane fees. Please fund the hub wallet: ${wallet.address}`);
+      }
+      // Try to estimate a reasonable fee (0.001 ETH as fallback)
+      transferFee = ethers.parseEther('0.001');
+      console.warn(`[HyperlaneBridge] Using fallback transfer fee: ${ethers.formatEther(transferFee)} ETH`);
     }
 
     // First, we need to ensure the wallet has Warp Route USDC tokens

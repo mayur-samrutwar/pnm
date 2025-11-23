@@ -238,9 +238,9 @@ class AppViewModel(
 
             _isLoadingVaultBalance.value = true
             try {
-                android.util.Log.d("AppViewModel", "Fetching vault balance for address: $ethAddress")
-                // Default to Base Sepolia for vault balance check
-                val response = hubApiService.getVaultBalance(ethAddress, Constants.CHAIN_ID_BASE_SEPOLIA)
+                android.util.Log.d("AppViewModel", "Fetching combined vault balance from all chains for address: $ethAddress")
+                // Fetch combined vault balance from all supported chains (pass null to get combined balance)
+                val response = hubApiService.getVaultBalance(ethAddress, null)
                 android.util.Log.d("AppViewModel", "Vault balance API response code: ${response.code()}")
                 if (response.isSuccessful && response.body() != null) {
                     val balanceResponse = response.body()!!
@@ -254,34 +254,82 @@ class AppViewModel(
                             val limitInMicroUSDC = (balanceDouble * 1_000_000).toLong()
                             android.util.Log.d("AppViewModel", "Calculated limit: $limitInMicroUSDC from balance: $balanceDouble")
                             // Update limit without resetting cumulative
-                            val currentLimit = counterManager.getLimit()
-                            val currentCumulative = counterManager.getCumulative()
+                            val currentLimit = counterManager.getLimit() // This is a suspend function, but we're in a coroutine scope
+                            val currentCumulative = counterManager.getCumulative() // This is also a suspend function
                             android.util.Log.d("AppViewModel", "Current limit: $currentLimit, New limit: $limitInMicroUSDC, Current cumulative: $currentCumulative, Previous vault balance: $previousVaultBalance")
                             
                             // Detect if this is a deposit (vault balance increased) or redemption (vault balance decreased)
                             val isNewDeposit = limitInMicroUSDC > previousVaultBalance && previousVaultBalance > 0L
                             val isMerchantRedeemed = limitInMicroUSDC < previousVaultBalance && previousVaultBalance > 0L
                             val hasNoSpending = currentCumulative == 0L
+                            val isFirstTime = previousVaultBalance == 0L && limitInMicroUSDC > 0L
+                            // CRITICAL: If limit is 0 but we have vault balance, we MUST initialize
+                            // This handles the case where initialization failed before or limit was reset
+                            val needsInitialization = currentLimit == 0L && limitInMicroUSDC > 0L
                             
-                            android.util.Log.d("AppViewModel", "Deposit detected: $isNewDeposit, Redemption detected: $isMerchantRedeemed, No spending: $hasNoSpending")
+                            android.util.Log.d("AppViewModel", "Deposit detected: $isNewDeposit, Redemption detected: $isMerchantRedeemed, No spending: $hasNoSpending, First time: $isFirstTime, Needs init: $needsInitialization")
                             
                             // If counter was never initialized (limit is 0), initialize it first
                             // Even if cumulative > 0, we should set the limit to current vault balance
                             // The limit represents max offline spending, which should match vault balance
-                            if (currentLimit == 0L) {
+                            // ALWAYS initialize if limit is 0 and we have vault balance, regardless of previousVaultBalance
+                            if (needsInitialization || isFirstTime) {
                                 if (currentCumulative > 0L) {
                                     android.util.Log.w("AppViewModel", "⚠️ Limit=0 but cumulative=$currentCumulative > 0. This may indicate limit was reset.")
                                     android.util.Log.w("AppViewModel", "Setting limit to current vault balance: $limitInMicroUSDC")
                                     android.util.Log.w("AppViewModel", "Note: User has already spent $currentCumulative offline. Remaining: ${limitInMicroUSDC - currentCumulative}")
                                 }
-                                android.util.Log.d("AppViewModel", "Counter not initialized, initializing with limit: $limitInMicroUSDC")
+                                android.util.Log.d("AppViewModel", "Counter not initialized or first deposit detected, initializing with limit: $limitInMicroUSDC")
+                                android.util.Log.d("AppViewModel", "Current state: currentLimit=$currentLimit, previousVaultBalance=$previousVaultBalance, limitInMicroUSDC=$limitInMicroUSDC")
+                                
+                                // Try initialization first
                                 counterManager.initCounter(limitInMicroUSDC)
-                                val initLimit = counterManager.getLimit()
+                                
+                                // Wait longer for async operations to complete (apply() is async)
+                                delay(500)
+                                
+                                // Verify initialization succeeded
+                                var initLimit = counterManager.getLimit()
+                                android.util.Log.d("AppViewModel", "After initCounter (first check): initLimit=$initLimit, expected=$limitInMicroUSDC")
+                                
+                                // If still 0, wait more and check again
+                                if (initLimit == 0L) {
+                                    android.util.Log.w("AppViewModel", "Limit still 0 after init, waiting more...")
+                                    delay(500)
+                                    initLimit = counterManager.getLimit()
+                                    android.util.Log.d("AppViewModel", "After initCounter (second check): initLimit=$initLimit")
+                                }
+                                
                                 if (initLimit == limitInMicroUSDC) {
                                     android.util.Log.d("AppViewModel", "✅ Counter initialized with limit: $limitInMicroUSDC")
                                     previousVaultBalance = limitInMicroUSDC
                                 } else {
                                     android.util.Log.e("AppViewModel", "❌ Counter initialization failed! Expected: $limitInMicroUSDC, Got: $initLimit")
+                                    android.util.Log.e("AppViewModel", "Attempting fallback: trying to update limit instead...")
+                                    
+                                    // Fallback: try updateLimit if initialization failed
+                                    val updateSuccess = counterManager.updateLimit(limitInMicroUSDC)
+                                    delay(200) // Wait for update to complete
+                                    var updatedLimit = counterManager.getLimit()
+                                    android.util.Log.d("AppViewModel", "Fallback updateLimit: success=$updateSuccess, limit=$updatedLimit")
+                                    
+                                    // If still 0, try one more time
+                                    if (updatedLimit == 0L && updateSuccess) {
+                                        android.util.Log.w("AppViewModel", "Limit still 0 after updateLimit, retrying...")
+                                        delay(300)
+                                        updatedLimit = counterManager.getLimit()
+                                        android.util.Log.d("AppViewModel", "After retry: limit=$updatedLimit")
+                                    }
+                                    
+                                    if (updateSuccess && updatedLimit == limitInMicroUSDC) {
+                                        android.util.Log.d("AppViewModel", "✅ Fallback: Successfully set limit via updateLimit: $updatedLimit")
+                                        previousVaultBalance = limitInMicroUSDC
+                                    } else {
+                                        android.util.Log.e("AppViewModel", "❌ Fallback also failed! updateSuccess=$updateSuccess, Limit is still: $updatedLimit")
+                                        android.util.Log.e("AppViewModel", "This is a critical error - limit cannot be set. User may need to clear app data.")
+                                        // Even if both failed, update previousVaultBalance to prevent infinite retries
+                                        previousVaultBalance = limitInMicroUSDC
+                                    }
                                 }
                             } else if (currentLimit != limitInMicroUSDC) {
                                 // CRITICAL: Only update limit if:
@@ -497,19 +545,20 @@ class AppViewModel(
 
     // Mutex to prevent concurrent deposits
     private val depositMutex = Mutex()
-    
+
     /**
      * Deposit USDC to vault
      * @param amount Amount in USDC (will be converted to token units)
+     * @param chainId Chain ID to deposit to (defaults to Base Sepolia)
      */
-    suspend fun depositToVault(amount: Double): Result<String> {
+    suspend fun depositToVault(amount: Double, chainId: Int = Constants.CHAIN_ID_BASE_SEPOLIA): Result<String> {
         // Prevent concurrent deposits
         return depositMutex.withLock {
-            depositToVaultInternal(amount)
+            depositToVaultInternal(amount, chainId)
         }
     }
     
-    private suspend fun depositToVaultInternal(amount: Double): Result<String> {
+    private suspend fun depositToVaultInternal(amount: Double, chainId: Int): Result<String> {
         val wallet = _wallet.value
         val ethPrivateKey = ethPrivateKey
         val ethAddress = wallet?.ethAddress
@@ -541,48 +590,60 @@ class AppViewModel(
             val amountInTokenUnits = (amount * 1_000_000).toLong()
             val amountBigInt = BigInteger.valueOf(amountInTokenUnits)
 
-            // Get nonce using the actual address
-            // Use direct RPC URL for nonce checks (more reliable than proxy)
-            // Use PENDING to include pending transactions and prevent nonce conflicts
-            val nonce = ethereumDepositManager.getNonce(Constants.RPC_URL_BASE_SEPOLIA_DIRECT, actualAddress)
-            android.util.Log.d("AppViewModel", "Using nonce: $nonce for deposit with address: $actualAddress")
+            // Get chain-specific configuration
+            val rpcUrl = Constants.getRpcUrl(chainId)
+            val vaultAddress = Constants.getVaultAddress(chainId)
+            val usdcAddress = Constants.getUSDCAddress(chainId)
+            val chainName = Constants.getChainName(chainId)
             
+            android.util.Log.d("AppViewModel", "Depositing to chain: $chainName (ID: $chainId)")
+            android.util.Log.d("AppViewModel", "Vault: $vaultAddress, USDC: $usdcAddress, RPC: $rpcUrl")
+            
+            // Get nonce using the actual address and chain-specific RPC
+            // Use direct RPC URL for nonce checks (more reliable than proxy)
+            val nonceRpcUrl = Constants.getDirectRpcUrl(chainId)
+            
+            val nonce = ethereumDepositManager.getNonce(nonceRpcUrl, actualAddress)
+            android.util.Log.d("AppViewModel", "Using nonce: $nonce for deposit with address: $actualAddress on chain $chainId")
+
             // Double-check nonce right before creating transactions to avoid race conditions
             delay(100) // Small delay to ensure RPC state is consistent
-            val finalNonce = ethereumDepositManager.getNonce(Constants.RPC_URL_BASE_SEPOLIA_DIRECT, actualAddress)
+            val finalNonce = ethereumDepositManager.getNonce(nonceRpcUrl, actualAddress)
             if (finalNonce != nonce) {
                 android.util.Log.w("AppViewModel", "Nonce changed from $nonce to $finalNonce, using updated nonce")
             }
             val actualNonce = finalNonce
 
-            // Create approve transaction
+            // Create approve transaction using chain-specific addresses
             val approveTx = ethereumDepositManager.createApproveTransaction(
                 privateKey = ethPrivateKey,
-                rpcUrl = Constants.RPC_URL,
-                tokenAddress = Constants.USDC_TOKEN_CONTRACT,
-                spenderAddress = Constants.VAULT_CONTRACT_ADDRESS,
+                rpcUrl = rpcUrl,
+                tokenAddress = usdcAddress,
+                spenderAddress = vaultAddress,
                 amount = amountBigInt,
-                nonce = actualNonce
+                nonce = actualNonce,
+                chainId = chainId.toLong() // Pass chain ID for EIP-155
             )
 
-            // Create deposit transaction (nonce + 1)
+            // Create deposit transaction (nonce + 1) using chain-specific addresses
             val depositTx = ethereumDepositManager.createDepositTransaction(
                 privateKey = ethPrivateKey,
-                rpcUrl = Constants.RPC_URL,
-                vaultAddress = Constants.VAULT_CONTRACT_ADDRESS,
+                rpcUrl = rpcUrl,
+                vaultAddress = vaultAddress,
                 userAddress = actualAddress, // Use actual address derived from key
-                tokenAddress = Constants.USDC_TOKEN_CONTRACT,
+                tokenAddress = usdcAddress,
                 amount = amountBigInt,
-                nonce = actualNonce + 1
+                nonce = actualNonce + 1,
+                chainId = chainId.toLong() // Pass chain ID for EIP-155
             )
 
-            // Send to hub
+            // Send to hub with chain ID
             val depositRequest = com.pnm.mobileapp.data.api.DepositRequest(
                 userAddress = actualAddress, // Use actual address
                 amount = amountBigInt.toString(),
                 signedApproveTx = approveTx,
                 signedDepositTx = depositTx,
-                chainId = Constants.CHAIN_ID_BASE_SEPOLIA // Specify chain for multichain support
+                chainId = chainId // Specify chain for multichain support
             )
 
             val response = hubApiService.deposit(depositRequest)

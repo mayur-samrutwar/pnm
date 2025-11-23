@@ -60,7 +60,12 @@ class MainActivity : FragmentActivity() {
             .build()
 
         // Initialize Retrofit with OkHttpClient to add ngrok header
+        // Set timeouts to accommodate long-running deposit transactions (up to 3 minutes)
         val okHttpClient = OkHttpClient.Builder()
+            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS) // 30 seconds to establish connection
+            .readTimeout(200, java.util.concurrent.TimeUnit.SECONDS) // 200 seconds (3.3 minutes) to read response
+            .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS) // 30 seconds to write request
+            .callTimeout(210, java.util.concurrent.TimeUnit.SECONDS) // 210 seconds (3.5 minutes) total call timeout
             .addInterceptor { chain ->
                 val originalRequest = chain.request()
                 val newRequest = originalRequest.newBuilder()

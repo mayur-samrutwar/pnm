@@ -27,6 +27,10 @@ contract Vault is Ownable {
     /// @dev Mapping to track settlement records per user and nonce
     mapping(address => mapping(uint256 => uint256)) public settlements;
 
+    /// @dev Mapping to track the maximum cumulative amount redeemed per user
+    /// This ensures vouchers are redeemed in order and prevents overspending
+    mapping(address => uint256) public maxRedeemedCumulative;
+
     /// @dev Event emitted when a user deposits tokens
     /// @param user The address of the user making the deposit
     /// @param amount The amount of tokens deposited
@@ -145,11 +149,20 @@ contract Vault is Ownable {
         // Check if slip has been used
         require(!usedSlip[payerAddress][slipId], "Vault: voucher already used");
 
-        // Check sufficient deposits
-        require(deposits[payerAddress] >= cumulative, "Vault: insufficient deposits");
+        // Check that cumulative is greater than or equal to the max redeemed cumulative
+        // This ensures vouchers are redeemed in order and prevents double-spending
+        require(cumulative >= maxRedeemedCumulative[payerAddress], "Vault: cumulative must be >= previous max redeemed");
+
+        // Check sufficient deposits to cover this voucher's amount
+        require(deposits[payerAddress] >= amount, "Vault: insufficient deposits");
 
         // Mark slip as used
         usedSlip[payerAddress][slipId] = true;
+
+        // Update max redeemed cumulative
+        if (cumulative > maxRedeemedCumulative[payerAddress]) {
+            maxRedeemedCumulative[payerAddress] = cumulative;
+        }
 
         // Decrease deposits by the amount being redeemed
         deposits[payerAddress] -= amount;
@@ -217,11 +230,20 @@ contract Vault is Ownable {
         // Check if slip has been used
         require(!usedSlip[payerAddress][slipId], "Vault: voucher already used");
 
-        // Check sufficient deposits
-        require(deposits[payerAddress] >= cumulative, "Vault: insufficient deposits");
+        // Check that cumulative is greater than or equal to the max redeemed cumulative
+        // This ensures vouchers are redeemed in order and prevents double-spending
+        require(cumulative >= maxRedeemedCumulative[payerAddress], "Vault: cumulative must be >= previous max redeemed");
+
+        // Check sufficient deposits to cover this voucher's amount
+        require(deposits[payerAddress] >= amount, "Vault: insufficient deposits");
 
         // Mark slip as used
         usedSlip[payerAddress][slipId] = true;
+
+        // Update max redeemed cumulative
+        if (cumulative > maxRedeemedCumulative[payerAddress]) {
+            maxRedeemedCumulative[payerAddress] = cumulative;
+        }
 
         // Decrease deposits by the amount being redeemed
         deposits[payerAddress] -= amount;
@@ -291,11 +313,20 @@ contract Vault is Ownable {
         // Check if slip has been used
         require(!usedSlip[payerAddress][slipId], "Vault: voucher already used");
 
-        // Check sufficient deposits
-        require(deposits[payerAddress] >= cumulative, "Vault: insufficient deposits");
+        // Check that cumulative is greater than or equal to the max redeemed cumulative
+        // This ensures vouchers are redeemed in order and prevents double-spending
+        require(cumulative >= maxRedeemedCumulative[payerAddress], "Vault: cumulative must be >= previous max redeemed");
+
+        // Check sufficient deposits to cover this voucher's amount
+        require(deposits[payerAddress] >= amount, "Vault: insufficient deposits");
 
         // Mark slip as used
         usedSlip[payerAddress][slipId] = true;
+
+        // Update max redeemed cumulative
+        if (cumulative > maxRedeemedCumulative[payerAddress]) {
+            maxRedeemedCumulative[payerAddress] = cumulative;
+        }
 
         // Decrease deposits by the amount being redeemed
         deposits[payerAddress] -= amount;

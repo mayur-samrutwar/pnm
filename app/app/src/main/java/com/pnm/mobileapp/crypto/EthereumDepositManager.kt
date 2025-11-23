@@ -28,7 +28,8 @@ class EthereumDepositManager {
         tokenAddress: String,
         spenderAddress: String,
         amount: BigInteger,
-        nonce: Long
+        nonce: Long,
+        chainId: Long
     ): String = withContext(Dispatchers.IO) {
         try {
             val web3j = Web3j.build(HttpService(rpcUrl))
@@ -43,7 +44,7 @@ class EthereumDepositManager {
             // Get gas price
             val gasPrice = web3j.ethGasPrice().send().gasPrice
             
-            // Create raw transaction
+            // Create EIP-155 transaction with chain ID (required for modern chains)
             val rawTransaction = RawTransaction.createTransaction(
                 BigInteger.valueOf(nonce),
                 gasPrice,
@@ -53,8 +54,8 @@ class EthereumDepositManager {
                 data
             )
             
-            // Sign transaction
-            val signedMessage = TransactionEncoder.signMessage(rawTransaction, credentials)
+            // Sign transaction with chain ID (EIP-155)
+            val signedMessage = TransactionEncoder.signMessage(rawTransaction, chainId, credentials)
             val hexValue = Numeric.toHexString(signedMessage)
             
             Log.d(TAG, "Created approve transaction")
@@ -75,7 +76,8 @@ class EthereumDepositManager {
         userAddress: String,
         tokenAddress: String,
         amount: BigInteger,
-        nonce: Long
+        nonce: Long,
+        chainId: Long
     ): String = withContext(Dispatchers.IO) {
         try {
             val web3j = Web3j.build(HttpService(rpcUrl))
@@ -91,7 +93,7 @@ class EthereumDepositManager {
             // Get gas price
             val gasPrice = web3j.ethGasPrice().send().gasPrice
             
-            // Create raw transaction
+            // Create EIP-155 transaction with chain ID (required for modern chains)
             val rawTransaction = RawTransaction.createTransaction(
                 BigInteger.valueOf(nonce),
                 gasPrice,
@@ -101,8 +103,8 @@ class EthereumDepositManager {
                 data
             )
             
-            // Sign transaction
-            val signedMessage = TransactionEncoder.signMessage(rawTransaction, credentials)
+            // Sign transaction with chain ID (EIP-155)
+            val signedMessage = TransactionEncoder.signMessage(rawTransaction, chainId, credentials)
             val hexValue = Numeric.toHexString(signedMessage)
             
             Log.d(TAG, "Created deposit transaction")
