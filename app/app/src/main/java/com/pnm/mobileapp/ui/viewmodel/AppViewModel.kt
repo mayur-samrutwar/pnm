@@ -467,9 +467,9 @@ class AppViewModel(
 
             _isLoadingBalance.value = true
             try {
-                android.util.Log.d("AppViewModel", "Fetching USDC balance for address: $finalAddress")
-                // Default to Base Sepolia for balance check
-                val response = hubApiService.getBalance(finalAddress, Constants.CHAIN_ID_BASE_SEPOLIA)
+                android.util.Log.d("AppViewModel", "Fetching combined USDC balance from all chains for address: $finalAddress")
+                // Fetch combined balance from all supported chains (pass null to get combined balance)
+                val response = hubApiService.getBalance(finalAddress, null)
                 android.util.Log.d("AppViewModel", "Balance API response code: ${response.code()}")
                 if (response.isSuccessful && response.body() != null) {
                     val balanceResponse = response.body()!!

@@ -550,7 +550,8 @@ router.get('/vaultBalance/:address', async (req: Request, res: Response) => {
 /**
  * GET /api/v1/balance/:address
  * Get USDC balance for an Ethereum address
- * Supports multichain: accepts chainId query parameter (defaults to Base Sepolia)
+ * Supports multichain: accepts chainId query parameter (defaults to combined balance from all chains)
+ * If chainId is not provided, returns combined balance from all supported chains
  */
 router.get('/balance/:address', async (req: Request, res: Response) => {
   try {
@@ -566,51 +567,96 @@ router.get('/balance/:address', async (req: Request, res: Response) => {
       });
     }
 
-    // Determine chain to query
-    let targetChainId: number;
+    // If chainId is provided, return balance for that specific chain
     if (chainId && ChainRegistry.isChainSupported(chainId)) {
-      targetChainId = chainId;
-    } else {
-      // Default to Base Sepolia
-      const supportedChains = ChainRegistry.getSupportedChainIds();
-      targetChainId = supportedChains[0] || 84532; // Default to Base Sepolia
-    }
+      const config = ChainRegistry.getChainConfig(chainId);
+      if (!config || !config.nativeUSDCAddress || !config.rpcUrl) {
+        return res.status(500).json({
+          status: 'error',
+          reason: `Chain configuration missing for chain ${chainId}`,
+        });
+      }
 
-    const config = ChainRegistry.getChainConfig(targetChainId);
-    if (!config || !config.nativeUSDCAddress || !config.rpcUrl) {
-      return res.status(500).json({
-        status: 'error',
-        reason: `Chain configuration missing for chain ${targetChainId}`,
+      // Use native USDC address for the chain
+      const tokenAddress = config.nativeUSDCAddress;
+      const rpcUrl = config.rpcUrl;
+
+      // Query token balance directly
+      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      const erc20Abi = ['function balanceOf(address owner) external view returns (uint256)', 'function decimals() external view returns (uint8)'];
+      const tokenContract = new ethers.Contract(tokenAddress, erc20Abi, provider);
+      
+      console.log(`[balance] Querying USDC balance on chain ${chainId} for address ${address}`);
+      const balance = await tokenContract.balanceOf(address);
+      const decimals = await tokenContract.decimals();
+      
+      // Convert BigInt to string for JSON serialization
+      const balanceStr = balance.toString();
+      const decimalsNum = Number(decimals);
+      const balanceFormatted = ethers.formatUnits(balance, decimalsNum);
+      
+      console.log(`[balance] Balance: ${balanceFormatted} USDC on chain ${chainId}`);
+      
+      return res.status(200).json({
+        status: 'success',
+        balance: balanceStr,
+        balanceFormatted: balanceFormatted,
+        decimals: decimalsNum,
+        tokenAddress: tokenAddress,
+        chainId: chainId,
       });
     }
 
-    // Use native USDC address for the chain
-    const tokenAddress = config.nativeUSDCAddress;
-    const rpcUrl = config.rpcUrl;
+    // If no chainId provided, fetch combined balance from all supported chains
+    const supportedChains = ChainRegistry.getSupportedChainIds();
+    let totalBalance = BigInt(0);
+    const balancesByChain: Array<{ chainId: number; balance: string; balanceFormatted: string }> = [];
+    let decimals = 6; // Default USDC decimals
 
-    // Query token balance directly
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
-    const erc20Abi = ['function balanceOf(address owner) external view returns (uint256)', 'function decimals() external view returns (uint8)'];
-    const tokenContract = new ethers.Contract(tokenAddress, erc20Abi, provider);
-    
-    console.log(`[balance] Querying USDC balance on chain ${targetChainId} for address ${address}`);
-    const balance = await tokenContract.balanceOf(address);
-    const decimals = await tokenContract.decimals();
-    
-    // Convert BigInt to string for JSON serialization
-    const balanceStr = balance.toString();
-    const decimalsNum = Number(decimals);
-    const balanceFormatted = ethers.formatUnits(balance, decimalsNum);
-    
-    console.log(`[balance] Balance: ${balanceFormatted} USDC on chain ${targetChainId}`);
-    
+    console.log(`[balance] Fetching combined USDC balance from all chains for address ${address}`);
+
+    for (const chainId of supportedChains) {
+      try {
+        const config = ChainRegistry.getChainConfig(chainId);
+        if (!config || !config.nativeUSDCAddress || !config.rpcUrl) {
+          console.warn(`[balance] Skipping chain ${chainId}: configuration missing`);
+          continue;
+        }
+
+        const provider = new ethers.JsonRpcProvider(config.rpcUrl);
+        const erc20Abi = ['function balanceOf(address owner) external view returns (uint256)', 'function decimals() external view returns (uint8)'];
+        const tokenContract = new ethers.Contract(config.nativeUSDCAddress, erc20Abi, provider);
+        
+        const balance = await tokenContract.balanceOf(address);
+        const chainDecimals = await tokenContract.decimals();
+        decimals = Number(chainDecimals); // Use decimals from first chain (should be same for USDC)
+        
+        const balanceFormatted = ethers.formatUnits(balance, decimals);
+        totalBalance += balance;
+        
+        balancesByChain.push({
+          chainId: chainId,
+          balance: balance.toString(),
+          balanceFormatted: balanceFormatted,
+        });
+        
+        console.log(`[balance] Chain ${chainId}: ${balanceFormatted} USDC`);
+      } catch (error: any) {
+        console.error(`[balance] Error fetching balance from chain ${chainId}:`, error.message);
+        // Continue with other chains even if one fails
+      }
+    }
+
+    const totalBalanceFormatted = ethers.formatUnits(totalBalance, decimals);
+    console.log(`[balance] Combined balance: ${totalBalanceFormatted} USDC across ${balancesByChain.length} chains`);
+
     return res.status(200).json({
       status: 'success',
-      balance: balanceStr,
-      balanceFormatted: balanceFormatted,
-      decimals: decimalsNum,
-      tokenAddress: tokenAddress,
-      chainId: targetChainId,
+      balance: totalBalance.toString(),
+      balanceFormatted: totalBalanceFormatted,
+      decimals: decimals,
+      chainId: null, // null indicates combined balance
+      balancesByChain: balancesByChain,
     });
   } catch (error) {
     console.error('Error getting balance:', error);

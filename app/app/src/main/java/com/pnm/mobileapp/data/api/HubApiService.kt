@@ -266,7 +266,20 @@ data class BalanceResponse(
     @SerializedName("decimals")
     val decimals: Int,
     @SerializedName("tokenAddress")
-    val tokenAddress: String? = null
+    val tokenAddress: String? = null,
+    @SerializedName("chainId")
+    val chainId: Int? = null, // null indicates combined balance from all chains
+    @SerializedName("balancesByChain")
+    val balancesByChain: List<ChainBalance>? = null // Per-chain balances when chainId is null
+)
+
+data class ChainBalance(
+    @SerializedName("chainId")
+    val chainId: Int,
+    @SerializedName("balance")
+    val balance: String,
+    @SerializedName("balanceFormatted")
+    val balanceFormatted: String
 )
 
 data class DepositRequest(
