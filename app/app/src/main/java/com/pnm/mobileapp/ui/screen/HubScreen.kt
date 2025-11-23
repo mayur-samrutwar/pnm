@@ -108,7 +108,7 @@ fun HubScreen(
                                 try {
                                     // Convert Slip to VoucherRequest
                                     val hubVoucher = slip.toHubVoucher()
-                                    val request = VoucherRequest(voucher = hubVoucher)
+                                    val request = VoucherRequest(voucher = hubVoucher, preferredChainId = null)
                                     val response = hubApiService.redeemSlip(request)
                                     redeemResponse = if (response.isSuccessful) {
                                         response.body()?.message ?: "Success"

@@ -36,6 +36,8 @@ import com.pnm.mobileapp.ui.viewmodel.MerchantViewModel
 import com.pnm.mobileapp.util.Constants
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import okhttp3.OkHttpClient
+import okhttp3.Interceptor
 
 enum class UserRole {
     USER, MERCHANT, HUB
@@ -57,9 +59,20 @@ class MainActivity : FragmentActivity() {
             .addMigrations(AppDatabase.MIGRATION_2_3)
             .build()
 
-        // Initialize Retrofit
+        // Initialize Retrofit with OkHttpClient to add ngrok header
+        val okHttpClient = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                val originalRequest = chain.request()
+                val newRequest = originalRequest.newBuilder()
+                    .header("ngrok-skip-browser-warning", "true")
+                    .build()
+                chain.proceed(newRequest)
+            }
+            .build()
+
         val retrofit = Retrofit.Builder()
             .baseUrl(Constants.HUB_BASE_URL)
+            .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
 

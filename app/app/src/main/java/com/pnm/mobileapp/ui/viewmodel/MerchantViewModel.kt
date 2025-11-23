@@ -28,7 +28,7 @@ class MerchantViewModel(
         pendingSlipDao.insertSlip(slip)
     }
 
-    fun syncWithHub(slip: Slip, isOnline: Boolean, merchantAddress: String? = null, payerAddress: String? = null) {
+    fun syncWithHub(slip: Slip, isOnline: Boolean, merchantAddress: String? = null, payerAddress: String? = null, preferredChainId: Int? = null) {
         viewModelScope.launch {
             try {
                 // Use provided merchant address, or fallback to stored one, or use device address
@@ -49,7 +49,7 @@ class MerchantViewModel(
                 // Pass finalPayerAddress to fix old vouchers that don't have ethAddress set
                 val hubVoucher = slip.toHubVoucher(payeeAddress, finalPayerAddress)
                 android.util.Log.d("MerchantViewModel", "syncWithHub: Created HubVoucher with payerAddress=${hubVoucher.payerAddress}, payeeAddress=${hubVoucher.payeeAddress}")
-                val request = VoucherRequest(voucher = hubVoucher)
+                val request = VoucherRequest(voucher = hubVoucher, preferredChainId = preferredChainId)
                 
                 if (isOnline) {
                     val response = hubApiService.validateSlip(request)
@@ -86,10 +86,10 @@ class MerchantViewModel(
         }
     }
 
-    fun syncSelectedSlips(slips: List<Slip>, isOnline: Boolean, merchantAddress: String? = null, payerAddress: String? = null) {
+    fun syncSelectedSlips(slips: List<Slip>, isOnline: Boolean, merchantAddress: String? = null, payerAddress: String? = null, preferredChainId: Int? = null) {
         viewModelScope.launch {
             slips.forEach { slip ->
-                syncWithHub(slip, isOnline, merchantAddress, payerAddress)
+                syncWithHub(slip, isOnline, merchantAddress, payerAddress, preferredChainId)
             }
         }
     }

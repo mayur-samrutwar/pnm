@@ -240,6 +240,80 @@ contract Vault is Ownable {
     }
 
     /**
+     * @dev Redeems a chain-agnostic voucher (multichain support)
+     * This function is for vouchers that were signed without chainId/contractAddress
+     * The hub verifies the signature off-chain and provides the chain-specific data
+     * 
+     * @param chainAgnosticPayload The ABI-encoded chain-agnostic voucher data (without chainId/contractAddress)
+     * @param targetChainId The target chain ID where redemption is happening
+     * @param targetContractAddress The target contract address (must match this contract)
+     * 
+     * Chain-agnostic voucher structure (encoded in chainAgnosticPayload):
+     * - expiry: uint256 - Must be greater than block.timestamp
+     * - payerAddress: address - The Ethereum address where deposits are
+     * - payeeAddress: address - The address to receive the payment
+     * - amount: uint256 - The amount to transfer
+     * - cumulative: uint256 - The cumulative amount spent (must be <= deposits[payer])
+     * - slipId: bytes32 - Unique identifier to prevent double-spending
+     * 
+     * Requirements:
+     * - Only the owner (hub) can call this function
+     * - The voucher must not be expired
+     * - The targetChainId must match the current chain
+     * - The targetContractAddress must match this contract
+     * - The slipId must not have been used before
+     * - The payer must have sufficient deposits (>= cumulative)
+     */
+    function redeemVoucherByHubMultichain(
+        bytes calldata chainAgnosticPayload,
+        uint256 targetChainId,
+        address targetContractAddress
+    ) external onlyOwner {
+        // Verify target chain ID matches current chain
+        require(targetChainId == block.chainid, "Vault: invalid chain ID");
+        
+        // Verify target contract address matches this contract
+        require(targetContractAddress == address(this), "Vault: invalid contract address");
+        
+        // Decode chain-agnostic voucher fields
+        (
+            uint256 expiry,
+            address payerAddress,
+            address payeeAddress,
+            uint256 amount,
+            uint256 cumulative,
+            bytes32 slipId
+        ) = abi.decode(chainAgnosticPayload, (uint256, address, address, uint256, uint256, bytes32));
+
+        // Verify expiry
+        require(expiry > block.timestamp, "Vault: voucher expired");
+
+        // Check if slip has been used
+        require(!usedSlip[payerAddress][slipId], "Vault: voucher already used");
+
+        // Check sufficient deposits
+        require(deposits[payerAddress] >= cumulative, "Vault: insufficient deposits");
+
+        // Mark slip as used
+        usedSlip[payerAddress][slipId] = true;
+
+        // Decrease deposits by the amount being redeemed
+        deposits[payerAddress] -= amount;
+
+        // Transfer tokens to payee
+        address token = userTokens[payerAddress];
+        require(token != address(0), "Vault: no token found for payer");
+        
+        IERC20 erc20Token = IERC20(token);
+        require(
+            erc20Token.transfer(payeeAddress, amount),
+            "Vault: transfer to payee failed"
+        );
+        
+        emit VoucherRedeemed(payerAddress, payeeAddress, amount, slipId);
+    }
+
+    /**
      * @dev Records a settlement for a user with a specific nonce
      * @param user The address of the user being settled
      * @param nonce The settlement nonce (prevents replay)

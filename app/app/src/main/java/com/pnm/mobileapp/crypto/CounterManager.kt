@@ -119,15 +119,18 @@ class CounterManager(private val context: Context) {
     /**
      * Update the offline limit without resetting cumulative
      * For hardware counter, this creates a new signed state with the new limit
+     * @return true if update succeeded, false otherwise
      */
-    suspend fun updateLimit(newLimit: Long) = withContext(Dispatchers.IO) {
+    suspend fun updateLimit(newLimit: Long): Boolean = withContext(Dispatchers.IO) {
         if (useHardwareCounter) {
             // Use hardware-backed counter's updateLimit which signs the new state
             val success = monotonicCounterManager.updateLimit(newLimit)
             if (!success) {
-                Log.e(TAG, "Failed to update limit in hardware counter")
+                Log.e(TAG, "Failed to update limit in hardware counter - signature verification may have failed")
+                return@withContext false
             } else {
                 Log.d(TAG, "Updated hardware counter limit to: $newLimit (cumulative preserved)")
+                return@withContext true
             }
         } else {
             // Update limit in encrypted prefs without touching cumulative
@@ -135,6 +138,7 @@ class CounterManager(private val context: Context) {
                 .putLong(KEY_OFFLINE_LIMIT, newLimit)
                 .apply()
             Log.d(TAG, "Updated offline limit to: $newLimit (cumulative preserved)")
+            return@withContext true
         }
     }
 

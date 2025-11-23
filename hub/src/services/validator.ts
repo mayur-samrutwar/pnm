@@ -13,14 +13,16 @@ export interface Voucher {
   payerAddress: string;
   payeeAddress: string;
   amount: number;
-  chainId: number;
+  chainId?: number; // Optional for chain-agnostic vouchers
   cumulative: number;
   counter: number;
   expiry: number;
   slipId: string;
-  contractAddress: string;
+  contractAddress?: string; // Optional for chain-agnostic vouchers
   metadata?: Record<string, any>;
   signature: string;
+  publicKey?: string; // P-256 public key
+  originalVoucherJson?: string; // Original JSON that was signed
 }
 
 /**
@@ -47,6 +49,55 @@ export function getSchemaErrors(voucher: any): string[] {
 }
 
 /**
+ * Verify chain-agnostic voucher signature (without chainId/contractAddress)
+ * This is for multichain vouchers that are signed without chain-specific data
+ */
+export function verifySignatureChainAgnostic(voucher: Voucher): { valid: boolean; recovered: string } {
+  try {
+    // Chain-agnostic payload (without chainId/contractAddress)
+    const chainAgnosticPayload = ethers.AbiCoder.defaultAbiCoder().encode(
+      [
+        'uint256', // expiry
+        'address', // payerAddress
+        'address', // payeeAddress
+        'uint256', // amount
+        'uint256', // cumulative
+        'bytes32', // slipId
+      ],
+      [
+        BigInt(voucher.expiry),
+        voucher.payerAddress,
+        voucher.payeeAddress,
+        BigInt(voucher.amount),
+        BigInt(voucher.cumulative),
+        ethers.id(voucher.slipId),
+      ]
+    );
+
+    // Hash the payload
+    const messageHash = ethers.keccak256(chainAgnosticPayload);
+
+    // Apply EIP-191 prefix
+    const messageBytes = ethers.getBytes(messageHash);
+    const prefix = ethers.toUtf8Bytes('\x19Ethereum Signed Message:\n32');
+    const ethSignedMessageHash = ethers.keccak256(ethers.concat([prefix, messageBytes]));
+
+    // Recover address from signature
+    const recovered = ethers.recoverAddress(ethSignedMessageHash, voucher.signature);
+
+    return {
+      valid: recovered.toLowerCase() === voucher.payerAddress.toLowerCase(),
+      recovered,
+    };
+  } catch (error) {
+    return {
+      valid: false,
+      recovered: '',
+    };
+  }
+}
+
+/**
  * Verify voucher signature using ethers.js
  * Returns the recovered address and validation result
  * 
@@ -54,8 +105,15 @@ export function getSchemaErrors(voucher: any): string[] {
  * 1. keccak256(voucherPayload) -> messageHash
  * 2. messageHash.toEthSignedMessageHash() -> ethSignedMessageHash
  * 3. ECDSA.recover(ethSignedMessageHash, signature) -> recovered address
+ * 
+ * Supports both chain-specific and chain-agnostic vouchers
  */
 export function verifySignature(voucher: Voucher): { valid: boolean; recovered: string } {
+  // If chainId/contractAddress are missing, use chain-agnostic verification
+  if (!voucher.chainId || !voucher.contractAddress) {
+    return verifySignatureChainAgnostic(voucher);
+  }
+
   try {
     // Reconstruct the message hash (same as Vault.sol does)
     // The contract expects ABI-encoded data without signature
@@ -117,11 +175,16 @@ export function verifyExpiry(voucher: Voucher): boolean {
 
 /**
  * Verify contract address matches expected address
+ * Returns true if voucher is chain-agnostic (no contractAddress) or matches expected
  */
 export function verifyContractAddress(
   voucher: Voucher,
   expectedAddress: string
 ): boolean {
+  // Chain-agnostic vouchers don't have contractAddress - always valid
+  if (!voucher.contractAddress) {
+    return true;
+  }
   return voucher.contractAddress.toLowerCase() === expectedAddress.toLowerCase();
 }
 

@@ -1,7 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { Voucher, verifySchema, verifySignature, verifyExpiry, verifyContractAddress, getSchemaErrors } from '../services/validator';
 import { VaultClient, VAULT_ABI } from '../services/vaultClient';
+import { ChainRegistry } from '../services/chainRegistry';
+import { HyperlaneBridge } from '../services/hyperlaneBridge';
 import { getDB } from '../db/inMemory';
+import { ethers } from 'ethers';
 
 const router = Router();
 
@@ -114,10 +117,11 @@ router.post('/validate', async (req: Request, res: Response) => {
 /**
  * POST /api/v1/redeem
  * Redeems a voucher atomically (checks DB, marks used, optionally calls on-chain)
+ * Supports multichain: accepts preferredChainId and bridges funds if needed
  */
 router.post('/redeem', async (req: Request, res: Response) => {
   try {
-    const { voucher } = req.body;
+    const { voucher, preferredChainId } = req.body;
 
     if (!voucher) {
       return res.status(400).json({
@@ -224,95 +228,159 @@ router.post('/redeem', async (req: Request, res: Response) => {
 
     let txHash: string | undefined;
     let redemptionStatus = 'validated'; // Default: only validated, not redeemed
+    let bridgeInfo: any = undefined;
+
+    // Determine target chain (preferred chain or default)
+    const targetChainId = preferredChainId || voucher.chainId || 84532; // Default to Base Sepolia
+    
+    if (!ChainRegistry.isChainSupported(targetChainId)) {
+      return res.status(400).json({
+        status: 'error',
+        reason: `Unsupported chain: ${targetChainId}`,
+      });
+    }
 
     // Optionally redeem on-chain
-    const redeemOnChain = getRedeemOnChain(); // Get fresh value
-    console.log('[REDEEM] Starting on-chain redemption process...');
-    console.log('[REDEEM] REDEEM_ON_CHAIN env:', process.env.REDEEM_ON_CHAIN);
-    console.log('[REDEEM] REDEEM_ON_CHAIN parsed:', redeemOnChain);
+    const redeemOnChain = getRedeemOnChain();
+    console.log('[REDEEM] Starting multichain redemption process...');
+    console.log('[REDEEM] Target chain:', targetChainId);
+    console.log('[REDEEM] Payer address:', voucher.payerAddress);
+    console.log('[REDEEM] Required cumulative:', voucher.cumulative);
     
     if (redeemOnChain) {
-      const client = getVaultClient();
-      console.log('[REDEEM] Vault client:', client ? 'initialized' : 'NOT initialized');
-      
-      if (client) {
-        try {
-          // Check if this is a P-256 voucher (has publicKey and originalVoucherJson)
-          const isP256Voucher = !!(voucher.publicKey && voucher.originalVoucherJson);
-          console.log('[REDEEM] Is P-256 voucher:', isP256Voucher);
-          console.log('[REDEEM] Has publicKey:', !!voucher.publicKey);
-          console.log('[REDEEM] Has originalVoucherJson:', !!voucher.originalVoucherJson);
+      try {
+        // Initialize Hyperlane bridge
+        const bridge = new HyperlaneBridge();
+        
+        // Step 1: Check deposits on target chain
+        console.log('[REDEEM] Checking deposits on target chain...');
+        const depositsOnTarget = await bridge.getDepositBalance(targetChainId, voucher.payerAddress);
+        console.log('[REDEEM] Deposits on target chain:', ethers.formatUnits(depositsOnTarget, 6), 'USDC');
+        
+        const requiredAmount = BigInt(voucher.cumulative);
+        let needsBridging = false;
+        let sourceChainId: number | null = null;
+        
+        if (depositsOnTarget < requiredAmount) {
+          // Step 2: Find chain with sufficient deposits
+          console.log('[REDEEM] Insufficient deposits on target chain, searching other chains...');
+          sourceChainId = await bridge.findChainWithDeposits(voucher.payerAddress, requiredAmount);
           
-          if (isP256Voucher) {
-            // For P-256 vouchers, use redeemVoucherByHub which allows the hub to redeem
-            // after verifying P-256 signature off-chain
-            console.log('[REDEEM] Redeeming P-256 voucher on-chain using hub authority...');
-            console.log('[REDEEM] Payer address (Ethereum):', voucher.payerAddress);
-            console.log('[REDEEM] Payee address:', voucher.payeeAddress);
-            console.log('[REDEEM] Full voucher object:', JSON.stringify(voucher, null, 2));
-            console.log('[REDEEM] Amount:', voucher.amount);
-            console.log('[REDEEM] Cumulative:', voucher.cumulative);
-            console.log('[REDEEM] SlipId:', voucher.slipId);
-            console.log('[REDEEM] Contract address:', voucher.contractAddress);
-            
-            // Check deposit balance for payer address before attempting redemption
-            try {
-              const { ethers } = require('ethers');
-              const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-              const vaultAbi = ['function deposits(address) external view returns (uint256)'];
-              const vaultContract = new ethers.Contract(process.env.VAULT_CONTRACT_ADDRESS!, vaultAbi, provider);
-              const depositBalance = await vaultContract.deposits(voucher.payerAddress);
-              console.log('[REDEEM] Deposit balance for', voucher.payerAddress, ':', ethers.formatUnits(depositBalance, 6), 'USDC');
-              console.log('[REDEEM] Required cumulative:', ethers.formatUnits(BigInt(voucher.cumulative), 6), 'USDC');
-              if (depositBalance < BigInt(voucher.cumulative)) {
-                console.error('[REDEEM] ⚠️ Insufficient deposits! Balance:', ethers.formatUnits(depositBalance, 6), 'USDC, Required:', ethers.formatUnits(BigInt(voucher.cumulative), 6), 'USDC');
-              }
-            } catch (balanceError) {
-              console.warn('[REDEEM] Could not check deposit balance:', balanceError);
-            }
-            
-            txHash = await client.redeemVoucherByHub(voucher);
-            console.log('[REDEEM] ✅ P-256 voucher redeemed on-chain successfully. Transaction hash:', txHash);
-            redemptionStatus = 'redeemed';
-          } else {
-            // This is a secp256k1 voucher - can redeem on-chain
-            console.log('[REDEEM] Redeeming secp256k1 voucher on-chain...');
-            txHash = await client.redeemVoucher(voucher, voucher.signature);
-            console.log('[REDEEM] ✅ On-chain redemption successful. Transaction hash:', txHash);
-            redemptionStatus = 'redeemed';
-          }
-        } catch (error: any) {
-          console.error('[REDEEM] ❌ Error redeeming on-chain:', error);
-          console.error('[REDEEM] Error type:', error.constructor?.name);
-          console.error('[REDEEM] Error message:', error.message);
-          console.error('[REDEEM] Error stack:', error.stack);
-          
-          if (error.data) {
-            console.error('[REDEEM] Error data:', error.data);
-          }
-          if (error.reason) {
-            console.error('[REDEEM] Error reason:', error.reason);
-          }
-          if (error.transaction) {
-            console.error('[REDEEM] Transaction that failed:', error.transaction);
-          }
-          if (error.code) {
-            console.error('[REDEEM] Error code:', error.code);
-          }
-          if (error.info) {
-            console.error('[REDEEM] Error info:', JSON.stringify(error.info, null, 2));
+          if (!sourceChainId) {
+            return res.status(400).json({
+              status: 'error',
+              reason: `Insufficient deposits across all chains. Required: ${ethers.formatUnits(requiredAmount, 6)} USDC`,
+            });
           }
           
-          // Don't mark as redeemed if on-chain redemption failed
-          redemptionStatus = 'validated';
+          console.log('[REDEEM] Found deposits on chain:', sourceChainId);
+          needsBridging = true;
         }
+        
+        // Step 3: Bridge funds if needed
+        if (needsBridging && sourceChainId) {
+          console.log('[REDEEM] Bridging funds from chain', sourceChainId, 'to', targetChainId);
+          
+          // Get VaultClient for source chain to withdraw
+          const sourceConfig = ChainRegistry.getChainConfig(sourceChainId)!;
+          const sourceClient = VaultClient.createForChain(
+            sourceChainId,
+            process.env.HUB_PRIVATE_KEY!,
+            VAULT_ABI
+          );
+          
+          // Get native USDC address on source chain
+          const nativeUSDC = ChainRegistry.getNativeUSDCAddress(sourceChainId);
+          if (!nativeUSDC) {
+            throw new Error(`No native USDC address for chain ${sourceChainId}`);
+          }
+          
+          // Withdraw from source chain Vault
+          console.log('[REDEEM] Withdrawing from Vault on source chain...');
+          const withdrawTxHash = await sourceClient.withdraw(nativeUSDC, requiredAmount);
+          console.log('[REDEEM] Withdrawn from Vault:', withdrawTxHash);
+          
+          // Wait for withdrawal to be confirmed
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          
+          // Bridge USDC
+          const bridgeResult = await bridge.bridgeUSDC(
+            sourceChainId,
+            targetChainId,
+            voucher.payerAddress,
+            requiredAmount
+          );
+          
+          bridgeInfo = {
+            sourceChain: sourceChainId,
+            targetChain: targetChainId,
+            messageTxHash: bridgeResult.messageTxHash,
+            transferTxHash: bridgeResult.transferTxHash,
+          };
+          
+          console.log('[REDEEM] Bridge initiated:', bridgeResult);
+          
+          // Wait for bridge confirmation (simplified - in production use proper polling)
+          console.log('[REDEEM] Waiting for bridge confirmation...');
+          const bridgeConfirmed = await bridge.waitForMessageDelivery(
+            bridgeResult.messageId,
+            targetChainId,
+            300000 // 5 minutes timeout
+          );
+          
+          if (!bridgeConfirmed) {
+            console.warn('[REDEEM] Bridge confirmation timeout, but continuing...');
+          }
+          
+          console.log('[REDEEM] Bridge confirmed, proceeding with redemption...');
+        }
+        
+        // Step 4: Redeem on target chain
+        const targetClient = VaultClient.createForChain(
+          targetChainId,
+          process.env.HUB_PRIVATE_KEY!,
+          VAULT_ABI
+        );
+        
+        // Check if this is a P-256 voucher
+        const isP256Voucher = !!(voucher.publicKey && voucher.originalVoucherJson);
+        console.log('[REDEEM] Is P-256 voucher:', isP256Voucher);
+        
+        if (isP256Voucher) {
+          // For P-256 vouchers, use redeemVoucherByHub
+          // Add chainId and contractAddress for target chain
+          const targetConfig = ChainRegistry.getChainConfig(targetChainId)!;
+          const voucherWithChain = {
+            ...voucher,
+            chainId: targetChainId,
+            contractAddress: targetConfig.vaultAddress,
+          };
+          
+          txHash = await targetClient.redeemVoucherByHub(voucherWithChain, targetChainId);
+          console.log('[REDEEM] ✅ P-256 voucher redeemed on-chain successfully. Transaction hash:', txHash);
       } else {
-        console.warn('[REDEEM] ⚠️ Vault client not initialized, skipping on-chain redeem');
+          // Secp256k1 voucher
+          const targetConfig = ChainRegistry.getChainConfig(targetChainId)!;
+          const voucherWithChain = {
+            ...voucher,
+            chainId: targetChainId,
+            contractAddress: targetConfig.vaultAddress,
+          };
+          
+          txHash = await targetClient.redeemVoucher(voucherWithChain, voucher.signature);
+          console.log('[REDEEM] ✅ On-chain redemption successful. Transaction hash:', txHash);
+        }
+        
+        redemptionStatus = 'redeemed';
+      } catch (error: any) {
+        console.error('[REDEEM] ❌ Error in multichain redemption:', error);
+        console.error('[REDEEM] Error message:', error.message);
+        console.error('[REDEEM] Error stack:', error.stack);
+        
         redemptionStatus = 'validated';
       }
       } else {
         console.log('[REDEEM] On-chain redemption disabled (REDEEM_ON_CHAIN=false)');
-        console.log('[REDEEM] Check .env file - REDEEM_ON_CHAIN should be set to "true"');
     }
 
     // Always store the slip record (validated or redeemed)
@@ -342,8 +410,10 @@ router.post('/redeem', async (req: Request, res: Response) => {
     return res.status(200).json({
       status: redemptionStatus === 'redeemed' ? 'redeemed' : 'validated',
       txHash: txHash || undefined,
+      bridgeInfo: bridgeInfo || undefined,
+      targetChainId: targetChainId,
       message: txHash 
-        ? 'Redeemed on-chain successfully' 
+        ? (bridgeInfo ? 'Bridged and redeemed on-chain successfully' : 'Redeemed on-chain successfully')
         : redemptionStatus === 'validated' 
           ? (voucher.publicKey && voucher.originalVoucherJson 
               ? 'Validated but on-chain redemption failed. Check hub logs for details.'
@@ -403,10 +473,12 @@ router.post('/depositWebhook', async (req: Request, res: Response) => {
 /**
  * GET /api/v1/vaultBalance/:address
  * Get vault deposit balance for a user address
+ * Supports multichain: accepts chainId query parameter
  */
 router.get('/vaultBalance/:address', async (req: Request, res: Response) => {
   try {
     const { address } = req.params;
+    const chainId = req.query.chainId ? Number(req.query.chainId) : null;
 
     // Validate address format
     const addressRegex = /^0x[a-fA-F0-9]{40}$/;
@@ -417,35 +489,40 @@ router.get('/vaultBalance/:address', async (req: Request, res: Response) => {
       });
     }
 
-    // Get RPC URL and vault address
-    const rpcUrl = process.env.RPC_URL;
-    const vaultAddress = process.env.VAULT_CONTRACT_ADDRESS;
+    // Determine chain to query
+    let targetChainId: number;
+    if (chainId && ChainRegistry.isChainSupported(chainId)) {
+      targetChainId = chainId;
+    } else {
+      // Default to first supported chain or use env
+      const supportedChains = ChainRegistry.getSupportedChainIds();
+      targetChainId = supportedChains[0] || 84532; // Default to Base Sepolia
+    }
 
-    if (!rpcUrl || !vaultAddress) {
+    const config = ChainRegistry.getChainConfig(targetChainId);
+    if (!config || !config.vaultAddress || !config.rpcUrl) {
       return res.status(500).json({
         status: 'error',
-        reason: 'Server configuration missing: RPC_URL or VAULT_CONTRACT_ADDRESS',
+        reason: `Chain configuration missing for chain ${targetChainId}`,
       });
     }
 
     // Get vault deposit balance
-    const { ethers } = require('ethers');
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const provider = new ethers.JsonRpcProvider(config.rpcUrl);
     const vaultAbi = ['function deposits(address) external view returns (uint256)'];
-    const vaultContract = new ethers.Contract(vaultAddress, vaultAbi, provider);
+    const vaultContract = new ethers.Contract(config.vaultAddress, vaultAbi, provider);
     
-    console.log(`[vaultBalance] Querying vault ${vaultAddress} for address ${address}`);
+    console.log(`[vaultBalance] Querying vault ${config.vaultAddress} on chain ${targetChainId} for address ${address}`);
     const depositBalance = await vaultContract.deposits(address);
     const depositBalanceStr = depositBalance.toString();
     console.log(`[vaultBalance] Raw balance: ${depositBalanceStr}`);
     
-    // Get token decimals (assuming USDC has 6 decimals)
-    const tokenAddress = process.env.MOCK_ERC20_ADDRESS || process.env.USDC_ADDRESS;
-    let decimals = 6; // Default for USDC
-    if (tokenAddress) {
+    // Get token decimals (USDC has 6 decimals)
+    let decimals = 6;
+    if (config.nativeUSDCAddress) {
       try {
         const erc20Abi = ['function decimals() external view returns (uint8)'];
-        const tokenContract = new ethers.Contract(tokenAddress, erc20Abi, provider);
+        const tokenContract = new ethers.Contract(config.nativeUSDCAddress, erc20Abi, provider);
         decimals = Number(await tokenContract.decimals());
       } catch (e) {
         console.warn('Could not fetch token decimals, using default 6');
@@ -459,6 +536,7 @@ router.get('/vaultBalance/:address', async (req: Request, res: Response) => {
       balance: depositBalanceStr,
       balanceFormatted: depositFormatted,
       decimals: decimals,
+      chainId: targetChainId,
     });
   } catch (error) {
     console.error('Error getting vault balance:', error);
@@ -472,10 +550,12 @@ router.get('/vaultBalance/:address', async (req: Request, res: Response) => {
 /**
  * GET /api/v1/balance/:address
  * Get USDC balance for an Ethereum address
+ * Supports multichain: accepts chainId query parameter (defaults to Base Sepolia)
  */
 router.get('/balance/:address', async (req: Request, res: Response) => {
   try {
     const { address } = req.params;
+    const chainId = req.query.chainId ? Number(req.query.chainId) : null;
 
     // Validate address format
     const addressRegex = /^0x[a-fA-F0-9]{40}$/;
@@ -486,30 +566,34 @@ router.get('/balance/:address', async (req: Request, res: Response) => {
       });
     }
 
-    // Get token address from env (Mock USDC or real USDC)
-    const tokenAddress = process.env.MOCK_ERC20_ADDRESS || process.env.USDC_ADDRESS;
-    if (!tokenAddress) {
+    // Determine chain to query
+    let targetChainId: number;
+    if (chainId && ChainRegistry.isChainSupported(chainId)) {
+      targetChainId = chainId;
+    } else {
+      // Default to Base Sepolia
+      const supportedChains = ChainRegistry.getSupportedChainIds();
+      targetChainId = supportedChains[0] || 84532; // Default to Base Sepolia
+    }
+
+    const config = ChainRegistry.getChainConfig(targetChainId);
+    if (!config || !config.nativeUSDCAddress || !config.rpcUrl) {
       return res.status(500).json({
         status: 'error',
-        reason: 'Token address not configured',
+        reason: `Chain configuration missing for chain ${targetChainId}`,
       });
     }
 
-    // Get RPC URL
-    const rpcUrl = process.env.RPC_URL;
-    if (!rpcUrl) {
-      return res.status(500).json({
-        status: 'error',
-        reason: 'RPC URL not configured',
-      });
-    }
+    // Use native USDC address for the chain
+    const tokenAddress = config.nativeUSDCAddress;
+    const rpcUrl = config.rpcUrl;
 
-    // Query token balance directly (no need for VaultClient)
-    const { ethers } = require('ethers');
+    // Query token balance directly
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     const erc20Abi = ['function balanceOf(address owner) external view returns (uint256)', 'function decimals() external view returns (uint8)'];
     const tokenContract = new ethers.Contract(tokenAddress, erc20Abi, provider);
     
+    console.log(`[balance] Querying USDC balance on chain ${targetChainId} for address ${address}`);
     const balance = await tokenContract.balanceOf(address);
     const decimals = await tokenContract.decimals();
     
@@ -518,12 +602,15 @@ router.get('/balance/:address', async (req: Request, res: Response) => {
     const decimalsNum = Number(decimals);
     const balanceFormatted = ethers.formatUnits(balance, decimalsNum);
     
+    console.log(`[balance] Balance: ${balanceFormatted} USDC on chain ${targetChainId}`);
+    
     return res.status(200).json({
       status: 'success',
       balance: balanceStr,
       balanceFormatted: balanceFormatted,
       decimals: decimalsNum,
       tokenAddress: tokenAddress,
+      chainId: targetChainId,
     });
   } catch (error) {
     console.error('Error getting balance:', error);
@@ -537,11 +624,12 @@ router.get('/balance/:address', async (req: Request, res: Response) => {
 /**
  * POST /api/v1/deposit
  * Deposit USDC tokens to vault
- * Expects: { userAddress, amount, signedApproveTx, signedDepositTx }
+ * Expects: { userAddress, amount, signedApproveTx, signedDepositTx, chainId? }
+ * Supports multichain: accepts optional chainId (defaults to Base Sepolia)
  */
 router.post('/deposit', async (req: Request, res: Response) => {
   try {
-    const { userAddress, amount, signedApproveTx, signedDepositTx } = req.body;
+    const { userAddress, amount, signedApproveTx, signedDepositTx, chainId } = req.body;
 
     if (!userAddress || !amount || !signedApproveTx || !signedDepositTx) {
       return res.status(400).json({
@@ -559,40 +647,170 @@ router.post('/deposit', async (req: Request, res: Response) => {
       });
     }
 
-    // Get RPC URL and contract addresses
-    const rpcUrl = process.env.RPC_URL;
-    const vaultAddress = process.env.VAULT_CONTRACT_ADDRESS;
-    const tokenAddress = process.env.MOCK_ERC20_ADDRESS || process.env.USDC_ADDRESS;
+    // Determine chain to use
+    let targetChainId: number;
+    if (chainId && ChainRegistry.isChainSupported(chainId)) {
+      targetChainId = chainId;
+    } else {
+      // Default to Base Sepolia
+      const supportedChains = ChainRegistry.getSupportedChainIds();
+      targetChainId = supportedChains[0] || 84532;
+    }
 
-    if (!rpcUrl || !vaultAddress || !tokenAddress) {
+    const config = ChainRegistry.getChainConfig(targetChainId);
+    if (!config) {
+      console.error(`[DEPOSIT] Chain config not found for chain ${targetChainId}`);
       return res.status(500).json({
         status: 'error',
-        reason: 'Server configuration missing: RPC_URL, VAULT_CONTRACT_ADDRESS, or token address',
+        reason: `Chain configuration not found for chain ${targetChainId}`,
       });
     }
+    
+    if (!config.rpcUrl || !config.vaultAddress || !config.nativeUSDCAddress) {
+      console.error(`[DEPOSIT] Chain config incomplete for chain ${targetChainId}:`, {
+        rpcUrl: config.rpcUrl ? 'set' : 'missing',
+        vaultAddress: config.vaultAddress ? 'set' : 'missing',
+        nativeUSDCAddress: config.nativeUSDCAddress ? 'set' : 'missing',
+      });
+      return res.status(500).json({
+        status: 'error',
+        reason: `Chain configuration incomplete for chain ${targetChainId}. Missing: ${!config.rpcUrl ? 'rpcUrl ' : ''}${!config.vaultAddress ? 'vaultAddress ' : ''}${!config.nativeUSDCAddress ? 'nativeUSDCAddress' : ''}`,
+      });
+    }
+
+    // Use chain-specific configuration
+    const rpcUrl = config.rpcUrl;
+    const vaultAddress = config.vaultAddress;
+    const tokenAddress = config.nativeUSDCAddress;
+
+    console.log(`[DEPOSIT] Processing deposit on chain ${targetChainId}`);
+    console.log(`[DEPOSIT] RPC: ${rpcUrl}`);
+    console.log(`[DEPOSIT] Vault: ${vaultAddress}`);
+    console.log(`[DEPOSIT] Token: ${tokenAddress}`);
 
     const { ethers } = require('ethers');
     const provider = new ethers.JsonRpcProvider(rpcUrl);
 
     try {
+      // Helper function to handle transaction errors
+      const handleTransaction = async (signedTx: string, txType: string): Promise<string> => {
+        try {
+          const tx = await provider.broadcastTransaction(signedTx);
+          await tx.wait();
+          console.log(`[DEPOSIT] ${txType} transaction confirmed:`, tx.hash);
+          return tx.hash;
+        } catch (error: any) {
+          const errorMessage = error.error?.message || error.message || '';
+          const errorCode = error.code || error.error?.code;
+          
+          // Handle "already known" error
+          if (errorMessage.includes('already known')) {
+            console.log(`[DEPOSIT] ${txType} transaction already known, attempting to find it...`);
+            
+            try {
+              const decodedTx = ethers.Transaction.from(signedTx);
+              const txHash = decodedTx.hash;
+              
+              console.log(`[DEPOSIT] Decoded ${txType} transaction hash:`, txHash);
+              
+              const existingTx = await provider.getTransaction(txHash);
+              if (existingTx) {
+                console.log(`[DEPOSIT] Found existing ${txType} transaction, waiting for confirmation...`);
+                const receipt = await Promise.race([
+                  provider.waitForTransaction(txHash),
+                  new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 60000))
+                ]) as ethers.TransactionReceipt;
+                
+                if (receipt) {
+                  console.log(`[DEPOSIT] ${txType} transaction confirmed:`, txHash);
+                  return txHash;
+                }
+              } else {
+                console.log(`[DEPOSIT] ${txType} transaction not found, waiting for mempool...`);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                const retryTx = await provider.getTransaction(txHash);
+                if (retryTx) {
+                  const receipt = await provider.waitForTransaction(txHash);
+                  if (receipt) {
+                    console.log(`[DEPOSIT] ${txType} transaction confirmed:`, txHash);
+                    return txHash;
+                  }
+                }
+              }
+              
+              console.log(`[DEPOSIT] ${txType} transaction hash (may be pending):`, txHash);
+              return txHash;
+            } catch (decodeError: any) {
+              console.error(`[DEPOSIT] Error handling ${txType} transaction:`, decodeError.message);
+              throw error;
+            }
+          }
+          
+          // Handle "replacement transaction underpriced" error
+          if (errorCode === 'REPLACEMENT_UNDERPRICED' || 
+              errorMessage.includes('replacement') && errorMessage.includes('underpriced')) {
+            console.log(`[DEPOSIT] ${txType} transaction replacement underpriced, checking for pending transaction...`);
+            
+            try {
+              const decodedTx = ethers.Transaction.from(signedTx);
+              const fromAddress = decodedTx.from;
+              const nonce = decodedTx.nonce;
+              
+              console.log(`[DEPOSIT] Checking pending transaction for nonce ${nonce} from ${fromAddress}`);
+              
+              // Check if there's a pending transaction with this nonce
+              const pendingTx = await provider.getTransactionCount(fromAddress, 'pending');
+              if (pendingTx > nonce) {
+                console.log(`[DEPOSIT] Found pending transaction with nonce ${nonce}, waiting for it to complete...`);
+                
+                // Wait for the pending transaction to be mined
+                // We'll poll for the nonce to increase
+                let attempts = 0;
+                while (attempts < 30) { // Wait up to 30 seconds
+                  await new Promise(resolve => setTimeout(resolve, 1000));
+                  const currentNonce = await provider.getTransactionCount(fromAddress, 'pending');
+                  if (currentNonce > nonce) {
+                    console.log(`[DEPOSIT] Pending ${txType} transaction completed (nonce advanced)`);
+                    // Transaction completed, but we don't have its hash
+                    // Return a placeholder - the actual transaction should be checked separately
+                    throw new Error(`Previous transaction with nonce ${nonce} was completed. Please check transaction status or retry with a new nonce.`);
+                  }
+                  attempts++;
+                }
+                
+                throw new Error(`Pending transaction with nonce ${nonce} is taking too long. Please wait and try again.`);
+              }
+              
+              throw error; // Re-throw if we can't handle it
+            } catch (decodeError: any) {
+              if (decodeError.message.includes('Previous transaction') || 
+                  decodeError.message.includes('Pending transaction')) {
+                throw decodeError;
+              }
+              console.error(`[DEPOSIT] Error handling ${txType} replacement:`, decodeError.message);
+              throw new Error(`Transaction replacement failed. A transaction with the same nonce is pending. Please wait for it to complete or use a higher gas price.`);
+            }
+          }
+          
+          throw error; // Re-throw other errors
+        }
+      };
+
       // Send approve transaction
-      const approveTx = await provider.broadcastTransaction(signedApproveTx);
-      await approveTx.wait();
-      console.log('Approve transaction confirmed:', approveTx.hash);
+      const approveTxHash = await handleTransaction(signedApproveTx, 'Approve');
 
       // Send deposit transaction
-      const depositTx = await provider.broadcastTransaction(signedDepositTx);
-      const receipt = await depositTx.wait();
-      console.log('Deposit transaction confirmed:', depositTx.hash);
+      const depositTxHash = await handleTransaction(signedDepositTx, 'Deposit');
 
       return res.status(200).json({
         status: 'success',
         message: 'Deposit successful',
-        approveTxHash: approveTx.hash,
-        depositTxHash: depositTx.hash,
+        approveTxHash: approveTxHash,
+        depositTxHash: depositTxHash,
+        chainId: targetChainId,
       });
     } catch (error: any) {
-      console.error('Error broadcasting transactions:', error);
+      console.error('[DEPOSIT] Error broadcasting transactions:', error);
       return res.status(500).json({
         status: 'error',
         reason: `Transaction failed: ${error.message}`,

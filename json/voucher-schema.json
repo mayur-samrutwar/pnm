@@ -8,12 +8,10 @@
     "payerAddress",
     "payeeAddress",
     "amount",
-    "chainId",
     "cumulative",
     "counter",
     "expiry",
     "slipId",
-    "contractAddress",
     "signature"
   ],
   "properties": {
@@ -34,7 +32,7 @@
     },
     "chainId": {
       "type": "integer",
-      "description": "Blockchain network chain ID",
+      "description": "Blockchain network chain ID (optional for chain-agnostic vouchers - not included in signature)",
       "minimum": 1
     },
     "cumulative": {
@@ -59,7 +57,7 @@
     },
     "contractAddress": {
       "type": "string",
-      "description": "Vault contract address in hexadecimal format",
+      "description": "Vault contract address in hexadecimal format (optional for chain-agnostic vouchers - not included in signature)",
       "pattern": "^0x[a-fA-F0-9]{40}$"
     },
     "metadata": {

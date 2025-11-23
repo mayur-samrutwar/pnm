@@ -23,7 +23,12 @@ module.exports = {
     },
     baseTestnet: {
       url: process.env.BASE_TESTNET_RPC_URL || process.env.RPC_URL || "https://sepolia.base.org",
-      accounts: process.env.PRIVATE_KEY && process.env.PRIVATE_KEY.length === 64 ? [process.env.PRIVATE_KEY] : [],
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      chainId: 84532,
+    },
+    basesepolia: {
+      url: process.env.BASE_SEPOLIA_RPC_URL || process.env.BASE_TESTNET_RPC_URL || "https://sepolia.base.org",
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       chainId: 84532,
     },
     polygonMumbai: {
@@ -32,8 +37,9 @@ module.exports = {
       chainId: 80001,
     },
     sepolia: {
-      url: process.env.SEPOLIA_RPC_URL || process.env.RPC_URL || "",
-      accounts: process.env.PRIVATE_KEY && process.env.PRIVATE_KEY.length === 64 ? [process.env.PRIVATE_KEY] : [],
+      url: process.env.ETHEREUM_SEPOLIA_RPC_URL || process.env.SEPOLIA_RPC_URL || process.env.RPC_URL || "",
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      chainId: 11155111,
     },
     mainnet: {
       url: process.env.MAINNET_RPC_URL || process.env.RPC_URL || "",

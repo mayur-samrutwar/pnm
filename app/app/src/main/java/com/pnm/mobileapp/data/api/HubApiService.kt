@@ -11,6 +11,7 @@ import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
+import retrofit2.http.Query
 
 interface HubApiService {
     @POST("/api/v1/validate")
@@ -23,10 +24,16 @@ interface HubApiService {
     suspend fun requestRefill(@Body request: RefillFlow.RefillRequest): Response<RefillResponse>
 
     @GET("/api/v1/balance/{address}")
-    suspend fun getBalance(@Path("address") address: String): Response<BalanceResponse>
+    suspend fun getBalance(
+        @Path("address") address: String,
+        @Query("chainId") chainId: Int? = null
+    ): Response<BalanceResponse>
 
     @GET("/api/v1/vaultBalance/{address}")
-    suspend fun getVaultBalance(@Path("address") address: String): Response<BalanceResponse>
+    suspend fun getVaultBalance(
+        @Path("address") address: String,
+        @Query("chainId") chainId: Int? = null
+    ): Response<BalanceResponse>
 
     @POST("/api/v1/deposit")
     suspend fun deposit(@Body request: DepositRequest): Response<DepositResponse>
@@ -34,11 +41,13 @@ interface HubApiService {
 
 /**
  * Request wrapper that matches hub server's expected format
- * Hub expects: { "voucher": { ... } }
+ * Hub expects: { "voucher": { ... }, "preferredChainId": <optional> }
  */
 data class VoucherRequest(
     @SerializedName("voucher")
-    val voucher: HubVoucher
+    val voucher: HubVoucher,
+    @SerializedName("preferredChainId")
+    val preferredChainId: Int? = null // Optional: merchant's preferred chain for redemption
 )
 
 /**
@@ -53,7 +62,7 @@ data class HubVoucher(
     @SerializedName("amount")
     val amount: Long, // Number, not string
     @SerializedName("chainId")
-    val chainId: Int = Constants.CHAIN_ID,
+    val chainId: Int? = null, // Optional: for chain-agnostic vouchers (not in signature)
     @SerializedName("cumulative")
     val cumulative: Long,
     @SerializedName("counter")
@@ -63,7 +72,7 @@ data class HubVoucher(
     @SerializedName("slipId")
     val slipId: String,
     @SerializedName("contractAddress")
-    val contractAddress: String,
+    val contractAddress: String? = null, // Optional: for chain-agnostic vouchers (not in signature)
     @SerializedName("signature")
     val signature: String,
     @SerializedName("publicKey")
@@ -168,12 +177,12 @@ fun Slip.toHubVoucher(
                 payerAddress = finalPayerEthAddress.ensureEthAddressFormat(), // Use Ethereum address if available
                 payeeAddress = merchantAddress.ensureEthAddressFormat(),
                 amount = voucher.amount.toLongOrNull() ?: 0L,
-                chainId = Constants.CHAIN_ID,
+                chainId = null, // Chain-agnostic: not included in signature
                 cumulative = voucher.cumulative,
                 counter = voucher.counter,
                 expiry = (voucher.timestamp / 1000) + (30 * 24 * 60 * 60), // 30 days from timestamp
                 slipId = voucher.slipId,
-                contractAddress = Constants.VAULT_CONTRACT_ADDRESS.ensureEthAddressFormat(),
+                contractAddress = null, // Chain-agnostic: not included in signature
                 signature = voucher.signature.ensureSignatureFormat(),
                 publicKey = voucher.publicKey?.ensurePublicKeyFormat(),
                 originalVoucherJson = originalJson // Use reconstructed original JSON (without signature)
@@ -218,12 +227,12 @@ private fun Slip.createHubVoucherFromSlip(merchantAddress: String, payerEthAddre
         payerAddress = finalPayerEthAddress.ensureEthAddressFormat(), // Prefer Ethereum address
         payeeAddress = merchantAddress.ensureEthAddressFormat(),
         amount = amount.toLongOrNull() ?: 0L,
-        chainId = Constants.CHAIN_ID,
+        chainId = null, // Chain-agnostic: not included in signature
         cumulative = cumulative,
         counter = counter,
         expiry = (timestamp / 1000) + (30 * 24 * 60 * 60), // 30 days from timestamp
         slipId = slipId,
-        contractAddress = Constants.VAULT_CONTRACT_ADDRESS.ensureEthAddressFormat(),
+        contractAddress = null, // Chain-agnostic: not included in signature
         signature = signature.ensureSignatureFormat(),
         publicKey = publicKey?.ensurePublicKeyFormat(),
         originalVoucherJson = rawJson // Include original JSON for P-256 verification
@@ -268,7 +277,9 @@ data class DepositRequest(
     @SerializedName("signedApproveTx")
     val signedApproveTx: String,
     @SerializedName("signedDepositTx")
-    val signedDepositTx: String
+    val signedDepositTx: String,
+    @SerializedName("chainId")
+    val chainId: Int? = null // Optional: chain ID for multichain support
 )
 
 data class DepositResponse(

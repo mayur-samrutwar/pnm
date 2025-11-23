@@ -1,5 +1,6 @@
 import { ethers } from 'ethers';
 import { Voucher } from './validator';
+import { ChainRegistry } from './chainRegistry';
 
 export class VaultClient {
   private provider: ethers.Provider;
@@ -75,9 +76,9 @@ export class VaultClient {
           'bytes32', // slipId
         ],
         [
-          voucher.contractAddress,
+          voucher.contractAddress || ethers.ZeroAddress,
           BigInt(voucher.expiry),
-          BigInt(voucher.chainId),
+          BigInt(voucher.chainId || 0),
           voucher.payerAddress,
           voucher.payeeAddress,
           BigInt(voucher.amount),
@@ -102,12 +103,42 @@ export class VaultClient {
   }
 
   /**
+   * Create a VaultClient for a specific chain
+   * @param chainId The chain ID
+   * @param privateKey The hub's private key
+   * @param contractABI The Vault contract ABI
+   * @returns VaultClient instance for the chain
+   */
+  static createForChain(
+    chainId: number,
+    privateKey: string,
+    contractABI: readonly any[] | any[]
+  ): VaultClient {
+    const config = ChainRegistry.getChainConfig(chainId);
+    if (!config) {
+      throw new Error(`Unsupported chain: ${chainId}`);
+    }
+
+    if (!config.vaultAddress) {
+      throw new Error(`Vault address not configured for chain ${chainId}`);
+    }
+
+    return new VaultClient(
+      config.rpcUrl,
+      privateKey,
+      config.vaultAddress,
+      contractABI
+    );
+  }
+
+  /**
    * Redeem a P-256 voucher on-chain using hub's authority
    * This function is called by the hub after verifying P-256 signatures off-chain
    * @param voucher The voucher to redeem (payerAddress should be Ethereum address)
+   * @param chainId Optional chain ID for multichain support (if not provided, uses voucher.chainId)
    * @returns Transaction hash
    */
-  async redeemVoucherByHub(voucher: Voucher): Promise<string> {
+  async redeemVoucherByHub(voucher: Voucher, chainId?: number): Promise<string> {
     console.log('[VaultClient] redeemVoucherByHub called');
     console.log('[VaultClient] Contract address:', this.contractAddress);
     console.log('[VaultClient] Wallet address:', this.wallet.address);
@@ -118,6 +149,12 @@ export class VaultClient {
         // Get current nonce before encoding (helps with debugging)
         const currentNonce = await this.provider.getTransactionCount(this.wallet.address, 'pending');
         console.log('[VaultClient] Current nonce:', currentNonce);
+
+        // Use provided chainId or fall back to voucher.chainId
+        const targetChainId = chainId || voucher.chainId;
+        const targetContractAddress = chainId 
+          ? ChainRegistry.getVaultAddress(chainId) || voucher.contractAddress
+          : voucher.contractAddress;
 
         // Encode voucher payload (same format as redeemVoucher)
         const voucherPayload = ethers.AbiCoder.defaultAbiCoder().encode(
@@ -132,16 +169,16 @@ export class VaultClient {
             'bytes32', // slipId
           ],
           [
-            voucher.contractAddress,
+            targetContractAddress,
             BigInt(voucher.expiry),
-            BigInt(voucher.chainId),
+            BigInt(targetChainId || (voucher.chainId ?? 0)),
             voucher.payerAddress, // This should be the Ethereum address
             voucher.payeeAddress,
             BigInt(voucher.amount),
             BigInt(voucher.cumulative),
             ethers.id(voucher.slipId), // Convert UUID to bytes32
           ]
-        );
+    );
 
         console.log('[VaultClient] Voucher payload encoded, length:', voucherPayload.length);
         console.log('[VaultClient] Calling redeemVoucherByHub on contract...');
@@ -224,18 +261,74 @@ export class VaultClient {
       throw error;
     }
   }
+
+  /**
+   * Redeem a chain-agnostic voucher using the multichain function
+   * @param chainAgnosticPayload The chain-agnostic voucher payload (without chainId/contractAddress)
+   * @param targetChainId The target chain ID where redemption is happening
+   * @returns Transaction hash
+   */
+  async redeemVoucherByHubMultichain(
+    chainAgnosticPayload: string,
+    targetChainId: number
+  ): Promise<string> {
+    return this.queueTransaction(async () => {
+      const targetContractAddress = ChainRegistry.getVaultAddress(targetChainId);
+      if (!targetContractAddress) {
+        throw new Error(`No vault address for chain ${targetChainId}`);
+      }
+
+      // Call the multichain redemption function
+      const tx = await this.contract.redeemVoucherByHubMultichain(
+        chainAgnosticPayload,
+        targetChainId,
+        targetContractAddress
+      );
+
+      const receipt = await tx.wait();
+      if (!receipt) {
+        throw new Error('Transaction receipt not found');
+      }
+
+      return receipt.hash;
+    });
+  }
+
+  /**
+   * Withdraw tokens from Vault (hub is owner)
+   * @param tokenAddress The token address to withdraw
+   * @param amount The amount to withdraw
+   * @returns Transaction hash
+   */
+  async withdraw(tokenAddress: string, amount: bigint): Promise<string> {
+    return this.queueTransaction(async () => {
+      const vaultAbi = ['function withdraw(address token, uint256 amount) external'];
+      const vault = new ethers.Contract(this.contractAddress, vaultAbi, this.wallet);
+      
+      const tx = await vault.withdraw(tokenAddress, amount);
+      const receipt = await tx.wait();
+      
+      if (!receipt) {
+        throw new Error('Transaction receipt not found');
+      }
+      
+      return receipt.hash;
+    });
+  }
 }
 
 // Vault contract ABI (minimal interface for redeemVoucher)
 export const VAULT_ABI = [
   'function redeemVoucher(bytes calldata voucherPayload, bytes calldata signature) external',
   'function redeemVoucherByHub(bytes calldata voucherPayload) external',
+  'function redeemVoucherByHubMultichain(bytes calldata chainAgnosticPayload, uint256 targetChainId, address targetContractAddress) external',
   'function deposit(address user, address token, uint256 amount) external',
   'function deposits(address) external view returns (uint256)',
   'function usedSlip(address, bytes32) external view returns (bool)',
   'function recordSettlement(address user, uint256 nonce, uint256 totalSettled) external',
   'function isUserSettled(address user, uint256 nonce) external view returns (bool)',
   'function settlements(address, uint256) external view returns (uint256)',
+  'function withdraw(address token, uint256 amount) external',
   'event VoucherRedeemed(address indexed payer, address indexed payee, uint256 amount, bytes32 slipId)',
   'event Deposit(address indexed user, uint256 amount)',
   'event SettlementRecorded(address indexed user, uint256 indexed nonce, uint256 totalSettled)',

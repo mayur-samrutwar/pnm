@@ -30,6 +30,7 @@ import kotlinx.coroutines.launch
 import com.pnm.mobileapp.data.model.Slip
 import com.pnm.mobileapp.data.model.SlipStatus
 import com.pnm.mobileapp.ui.viewmodel.MerchantViewModel
+import com.pnm.mobileapp.util.Constants
 import com.pnm.mobileapp.util.QRCodeUtils
 import com.pnm.mobileapp.util.VoucherValidator
 
@@ -45,6 +46,8 @@ fun MerchantScreen(
     val coroutineScope = rememberCoroutineScope()
     var isOnline by remember { mutableStateOf(false) }
     var isSlipsExpanded by remember { mutableStateOf(true) }
+    var preferredChainId by remember { mutableStateOf<Int?>(Constants.CHAIN_ID_BASE_SEPOLIA) }
+    var chainDropdownExpanded by remember { mutableStateOf(false) }
     val syncResponse by viewModel.syncResponse.collectAsState()
     val pendingSlips by viewModel.pendingSlips.collectAsState(initial = emptyList())
 
@@ -186,6 +189,41 @@ fun MerchantScreen(
                     Text(if (isOnline) "Validate Only (Check)" else "Redeem & Transfer Money")
                 }
                 
+                // Chain Selection (only show when redeeming, not validating)
+                if (!isOnline) {
+                    val supportedChains = Constants.getSupportedChainIds()
+                    
+                    ExposedDropdownMenuBox(
+                        expanded = chainDropdownExpanded,
+                        onExpandedChange = { chainDropdownExpanded = it }
+                    ) {
+                        OutlinedTextField(
+                            value = preferredChainId?.let { Constants.getChainName(it) } ?: "Select Chain",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Preferred Chain") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = chainDropdownExpanded) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor()
+                        )
+                        ExposedDropdownMenu(
+                            expanded = chainDropdownExpanded,
+                            onDismissRequest = { chainDropdownExpanded = false }
+                        ) {
+                            supportedChains.forEach { chainId ->
+                                DropdownMenuItem(
+                                    text = { Text(Constants.getChainName(chainId)) },
+                                    onClick = {
+                                        preferredChainId = chainId
+                                        chainDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                
                 // Sync button at the top
                 // Allow syncing PENDING or VALIDATED slips (validated slips can still be redeemed)
                 val syncableSlips = pendingSlips.filter { 
@@ -197,7 +235,7 @@ fun MerchantScreen(
                         if (syncableSlips.isEmpty()) {
                             Toast.makeText(context, "No slips to sync", Toast.LENGTH_SHORT).show()
                         } else {
-                            viewModel.syncSelectedSlips(syncableSlips, isOnline, merchantEthAddress, payerEthAddress)
+                            viewModel.syncSelectedSlips(syncableSlips, isOnline, merchantEthAddress, payerEthAddress, preferredChainId)
                             val action = if (isOnline) "Validating" else "Redeeming"
                             Toast.makeText(context, "$action ${syncableSlips.size} slip(s)...", Toast.LENGTH_SHORT).show()
                         }
