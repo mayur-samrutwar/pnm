@@ -2,13 +2,17 @@ package com.pnm.mobileapp.ui.screen
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
@@ -17,21 +21,25 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import android.widget.Toast
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.compose.runtime.collectAsState
 import com.google.zxing.BarcodeFormat
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanOptions
+import com.journeyapps.barcodescanner.BarcodeCallback
+import com.journeyapps.barcodescanner.BarcodeResult
+import com.journeyapps.barcodescanner.DecoratedBarcodeView
+import com.journeyapps.barcodescanner.DefaultDecoderFactory
 import kotlinx.coroutines.launch
 import com.pnm.mobileapp.data.model.Slip
 import com.pnm.mobileapp.data.model.SlipStatus
 import com.pnm.mobileapp.ui.viewmodel.MerchantViewModel
 import com.pnm.mobileapp.util.Constants
-import com.pnm.mobileapp.util.QRCodeUtils
 import com.pnm.mobileapp.util.VoucherValidator
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -50,107 +58,317 @@ fun MerchantScreen(
     var chainDropdownExpanded by remember { mutableStateOf(false) }
     val syncResponse by viewModel.syncResponse.collectAsState()
     val pendingSlips by viewModel.pendingSlips.collectAsState(initial = emptyList())
-
-    val barcodeLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
-        result.contents?.let { json ->
-            coroutineScope.launch {
-                // Validate JSON schema
-                if (!VoucherValidator.validateSchema(json)) {
-                    Toast.makeText(context, "Invalid voucher JSON schema", Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
-                
-                // Parse voucher
-                val voucher = VoucherValidator.parseVoucher(json)
-                if (voucher == null) {
-                    Toast.makeText(context, "Failed to parse voucher", Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
-                
-                // Create Slip from Voucher
-                // Extract Ethereum address from voucher if available, otherwise leave empty
-                val ethAddress = voucher.ethAddress ?: ""
-                android.util.Log.d("MerchantScreen", "Scanned voucher: slipId=${voucher.slipId}, payer=${voucher.payer}, ethAddress=$ethAddress, rawJson=$json")
-                val slip = Slip(
-                    slipId = voucher.slipId,
-                    payer = voucher.payer,
-                    amount = voucher.amount,
-                    userAddress = voucher.payer,
-                    ethAddress = ethAddress, // Use Ethereum address from voucher JSON if available
-                    cumulative = voucher.cumulative,
-                    counter = voucher.counter,
-                    publicKey = voucher.publicKey,
-                    signature = voucher.signature,
-                    rawJson = json,
-                    timestamp = voucher.timestamp,
-                    status = SlipStatus.PENDING
-                )
-                android.util.Log.d("MerchantScreen", "Created Slip: ethAddress=${slip.ethAddress}")
-                
-                // Save to Room database
-                viewModel.saveSlip(slip)
-                Toast.makeText(context, "Voucher scanned and saved", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    fun launchQRScanner() {
-        val options = ScanOptions()
-        options.setDesiredBarcodeFormats(BarcodeFormat.QR_CODE.name)
-        options.setPrompt("Scan QR Code")
-        options.setCameraId(0)
-        options.setBeepEnabled(false)
-        options.setBarcodeImageEnabled(true)
-        barcodeLauncher.launch(options)
-    }
+    
+    // Scanner state
+    var hasCameraPermission by remember { mutableStateOf(false) }
+    var isScanning by remember { mutableStateOf(false) }
+    var scannedResult by remember { mutableStateOf<String?>(null) }
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
+        hasCameraPermission = isGranted
         if (isGranted) {
-            launchQRScanner()
+            isScanning = true
+        } else {
+            Toast.makeText(context, "Camera permission is required to scan QR codes", Toast.LENGTH_LONG).show()
         }
     }
 
-    fun requestCameraPermissionAndScan() {
+    LaunchedEffect(Unit) {
         val hasPermission = ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.CAMERA
         ) == PackageManager.PERMISSION_GRANTED
-
+        
+        hasCameraPermission = hasPermission
         if (hasPermission) {
-            launchQRScanner()
+            isScanning = true
         } else {
             cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .padding(bottom = 80.dp), // Add bottom padding to avoid nav menu
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        // Scan QR Section
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("Scan Payment Slip", style = MaterialTheme.typography.headlineSmall)
-                Button(
-                    onClick = { requestCameraPermissionAndScan() },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Scan QR")
+    val barcodeCallback = remember {
+        object : BarcodeCallback {
+            override fun barcodeResult(result: BarcodeResult?) {
+                result?.text?.let { json ->
+                    if (scannedResult == null) {
+                        scannedResult = json
+                        isScanning = false
+                        
+                        // Validate and process the scanned QR code
+                        coroutineScope.launch {
+                            // Validate JSON schema
+                            if (!VoucherValidator.validateSchema(json)) {
+                                Toast.makeText(context, "Invalid voucher JSON schema", Toast.LENGTH_SHORT).show()
+                                scannedResult = null
+                                isScanning = true
+                                return@launch
+                            }
+                            
+                            // Parse voucher
+                            val voucher = VoucherValidator.parseVoucher(json)
+                            if (voucher == null) {
+                                Toast.makeText(context, "Failed to parse voucher", Toast.LENGTH_SHORT).show()
+                                scannedResult = null
+                                isScanning = true
+                                return@launch
+                            }
+                            
+                            // Create Slip from Voucher
+                            val ethAddress = voucher.ethAddress ?: ""
+                            android.util.Log.d("MerchantScreen", "Scanned voucher: slipId=${voucher.slipId}, payer=${voucher.payer}, ethAddress=$ethAddress, rawJson=$json")
+                            val slip = Slip(
+                                slipId = voucher.slipId,
+                                payer = voucher.payer,
+                                amount = voucher.amount,
+                                userAddress = voucher.payer,
+                                ethAddress = ethAddress,
+                                cumulative = voucher.cumulative,
+                                counter = voucher.counter,
+                                publicKey = voucher.publicKey,
+                                signature = voucher.signature,
+                                rawJson = json,
+                                timestamp = voucher.timestamp,
+                                status = SlipStatus.PENDING
+                            )
+                            android.util.Log.d("MerchantScreen", "Created Slip: ethAddress=${slip.ethAddress}")
+                            
+                            // Save to Room database
+                            viewModel.saveSlip(slip)
+                            Toast.makeText(context, "Voucher scanned and saved", Toast.LENGTH_SHORT).show()
+                            
+                            // Reset scanner after a delay
+                            kotlinx.coroutines.delay(2000)
+                            scannedResult = null
+                            isScanning = true
+                        }
+                    }
                 }
             }
-        }
 
-        // Sync Controls Section (moved to top)
-        Card(modifier = Modifier.fillMaxWidth()) {
+            override fun possibleResultPoints(resultPoints: MutableList<com.google.zxing.ResultPoint>?) {
+                // Optional: Handle result points for UI feedback
+            }
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = "Scan Payment",
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.White
+                )
+            )
+        }
+    ) { paddingValues ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            // Scanner View (full screen)
+            if (hasCameraPermission && isScanning) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                ) {
+                    // QR Scanner View
+                    AndroidView(
+                        factory = { ctx ->
+                            DecoratedBarcodeView(ctx).apply {
+                                barcodeView.decoderFactory = DefaultDecoderFactory(
+                                    listOf(BarcodeFormat.QR_CODE)
+                                )
+                                // Hide default UI elements
+                                setStatusText("")
+                                barcodeView.resume()
+                                decodeContinuous(barcodeCallback)
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        update = { view ->
+                            if (isScanning) {
+                                view.barcodeView.resume()
+                            } else {
+                                view.barcodeView.pause()
+                            }
+                        }
+                    )
+
+                    // Overlay with square frame
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        // Square frame (scanner area) - transparent center
+                        Box(
+                            modifier = Modifier
+                                .size(280.dp)
+                                .border(
+                                    width = 3.dp,
+                                    color = Color.White,
+                                    shape = RoundedCornerShape(24.dp)
+                                )
+                        ) {
+                            // Corner indicators
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .size(30.dp)
+                                    .border(
+                                        width = 4.dp,
+                                        color = Color(0xFF6366F1),
+                                        shape = RoundedCornerShape(topStart = 24.dp)
+                                    )
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(30.dp)
+                                    .border(
+                                        width = 4.dp,
+                                        color = Color(0xFF6366F1),
+                                        shape = RoundedCornerShape(topEnd = 24.dp)
+                                    )
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .size(30.dp)
+                                    .border(
+                                        width = 4.dp,
+                                        color = Color(0xFF6366F1),
+                                        shape = RoundedCornerShape(bottomStart = 24.dp)
+                                    )
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .size(30.dp)
+                                    .border(
+                                        width = 4.dp,
+                                        color = Color(0xFF6366F1),
+                                        shape = RoundedCornerShape(bottomEnd = 24.dp)
+                                    )
+                            )
+                        }
+                    }
+
+                    // Instructions text
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(bottom = 100.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Position QR code within the frame",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = "Scanning will happen automatically",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 14.sp
+                            ),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            } else if (!hasCameraPermission) {
+                // Permission denied state
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = "Camera Permission Required",
+                        style = MaterialTheme.typography.headlineSmall.copy(
+                            color = Color(0xFF1E293B),
+                            fontWeight = FontWeight.Bold
+                        ),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Please grant camera permission to scan QR codes",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            color = Color(0xFF64748B)
+                        ),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Button(
+                        onClick = {
+                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF6366F1)
+                        )
+                    ) {
+                        Text(
+                            "Grant Permission",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        )
+                    }
+                }
+            }
+            
+            // Controls (shown when not scanning)
+            if (!isScanning || !hasCameraPermission) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                        .padding(bottom = 80.dp), // Add bottom padding to avoid nav menu
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // Start Scanning Button
+                    if (hasCameraPermission && !isScanning) {
+                        Button(
+                            onClick = { isScanning = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF6366F1)
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                "Start Scanning",
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            )
+                        }
+                    }
+                    
+                    // Sync Controls Section
+                    Card(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -274,12 +492,12 @@ fun MerchantScreen(
             }
         }
 
-        // Collapsible Pending Slips List
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+                    // Collapsible Pending Slips List
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                 // Collapsible header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -359,6 +577,9 @@ fun MerchantScreen(
                                 }
                             }
                         }
+                    }
+                }
+            }
                     }
                 }
             }
