@@ -44,13 +44,25 @@ class CounterManager(private val context: Context) {
      * Tries to use hardware-backed counter if StrongBox available
      */
     suspend fun initCounter(limit: Long) = withContext(Dispatchers.IO) {
+        Log.d(TAG, "initCounter: Starting initialization with limit: $limit (${limit / 1_000_000.0} USDC)")
         // Try to use hardware-backed counter
         val strongBoxAvailable = hardwareKeystoreManager.detectStrongBoxAvailable()
+        Log.d(TAG, "initCounter: StrongBox available: $strongBoxAvailable")
         if (strongBoxAvailable) {
-            useHardwareCounter = monotonicCounterManager.initCounter(limit)
-            if (useHardwareCounter) {
-                Log.d(TAG, "Using hardware-backed monotonic counter")
+            val hardwareInitSuccess = monotonicCounterManager.initCounter(limit)
+            if (hardwareInitSuccess) {
+                useHardwareCounter = true
+                Log.d(TAG, "✅ Using hardware-backed monotonic counter, limit initialized: $limit")
+                // Verify it was set correctly
+                val verifyLimit = monotonicCounterManager.getLimit()
+                if (verifyLimit == limit) {
+                    Log.d(TAG, "✅ Verified hardware counter limit: $verifyLimit")
+                } else {
+                    Log.e(TAG, "❌ Hardware counter limit mismatch! Expected: $limit, Got: $verifyLimit")
+                }
                 return@withContext
+            } else {
+                Log.w(TAG, "Hardware counter initialization failed, falling back to encrypted prefs")
             }
         }
         
@@ -61,6 +73,14 @@ class CounterManager(private val context: Context) {
             .putLong(KEY_CUMULATIVE, 0L)
             .putInt(KEY_COUNTER, 0)
             .apply()
+        
+        // Verify it was saved correctly
+        val savedLimit = encryptedPrefs.getLong(KEY_OFFLINE_LIMIT, 0L)
+        if (savedLimit == limit) {
+            Log.d(TAG, "✅ Fallback: Encrypted prefs limit initialized: $savedLimit (${savedLimit / 1_000_000.0} USDC)")
+        } else {
+            Log.e(TAG, "❌ Fallback: Failed to save limit! Expected: $limit, Got: $savedLimit")
+        }
     }
 
     /**
