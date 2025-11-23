@@ -149,17 +149,15 @@ contract CrossChainReceiver {
         // Approve USDC to Vault using SafeERC20 forceApprove (OpenZeppelin v5.0)
         usdc.forceApprove(vault, amount);
         
-        // Call Vault.deposit()
-        (bool success, ) = vault.call(
-            abi.encodeWithSignature(
-                "deposit(address,address,uint256)",
-                userAddress,
-                nativeUSDC,
-                amount
-            )
-        );
-        
-        require(success, "Vault deposit failed");
+        // Call Vault.deposit() using interface
+        // Create interface for Vault
+        IVault vaultContract = IVault(vault);
+        vaultContract.deposit(userAddress, nativeUSDC, amount);
+    }
+    
+    // Interface for Vault contract
+    interface IVault {
+        function deposit(address user, address token, uint256 amount) external;
     }
 }
 

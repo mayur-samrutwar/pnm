@@ -331,9 +331,33 @@ router.post('/redeem', async (req: Request, res: Response) => {
           
           // Get actual available balance on source chain
           const depositsOnSource = await bridge.getDepositBalance(sourceChainId, voucher.payerAddress);
-          const actualBridgeAmount = amountToBridge < depositsOnSource ? amountToBridge : depositsOnSource;
+          
+          // Also check the Vault contract's actual USDC balance to ensure it has the tokens
+          const vaultAddress = ChainRegistry.getVaultAddress(sourceChainId);
+          const vaultUSDCBalance = await sourceClient.getTokenBalance(vaultAddress!, nativeUSDC);
           
           console.log('[REDEEM] Deposits on source chain:', ethers.formatUnits(depositsOnSource, 6), 'USDC');
+          console.log('[REDEEM] Vault contract USDC balance:', ethers.formatUnits(vaultUSDCBalance, 6), 'USDC');
+          
+          // Use the minimum of: requested amount and user deposits
+          // The Vault's total balance might be lower if other users' deposits were redeemed,
+          // but we should use the user's deposit balance as the limit
+          const actualBridgeAmount = amountToBridge < depositsOnSource ? amountToBridge : depositsOnSource;
+          
+          // Warn if Vault balance is lower than user deposits (might indicate a problem)
+          if (vaultUSDCBalance < depositsOnSource) {
+            console.warn(`[REDEEM] ⚠️ Warning: Vault USDC balance (${ethers.formatUnits(vaultUSDCBalance, 6)} USDC) is less than user deposits (${ethers.formatUnits(depositsOnSource, 6)} USDC). This might indicate deposits were already redeemed.`);
+          }
+          
+          // Check if we can actually withdraw (Vault must have at least the amount we want to bridge)
+          if (vaultUSDCBalance < actualBridgeAmount) {
+            throw new Error(`Cannot bridge: Vault has insufficient USDC balance on chain ${sourceChainId}. Need: ${ethers.formatUnits(actualBridgeAmount, 6)} USDC, Vault balance: ${ethers.formatUnits(vaultUSDCBalance, 6)} USDC, User deposits: ${ethers.formatUnits(depositsOnSource, 6)} USDC`);
+          }
+          
+          if (actualBridgeAmount === 0n) {
+            throw new Error(`Cannot bridge: No funds available. User deposits: ${ethers.formatUnits(depositsOnSource, 6)} USDC`);
+          }
+          
           console.log('[REDEEM] Withdrawing', ethers.formatUnits(actualBridgeAmount, 6), 'USDC from Vault on source chain...');
           
           // Withdraw from source chain Vault - only withdraw what we need to bridge
@@ -361,19 +385,24 @@ router.post('/redeem', async (req: Request, res: Response) => {
           
           console.log('[REDEEM] Bridge initiated:', bridgeResult);
           
-          // Wait for bridge confirmation (simplified - in production use proper polling)
-          console.log('[REDEEM] Waiting for bridge confirmation...');
-          const bridgeConfirmed = await bridge.waitForMessageDelivery(
-            bridgeResult.messageId,
-            targetChainId,
-            300000 // 5 minutes timeout
-          );
+          // bridgeUSDC now waits for USDC to arrive and deposit to Vault
+          // So by the time it returns, the deposit should be complete
+          // But let's verify the deposit was successful before redeeming
+          console.log('[REDEEM] Verifying deposit to Vault on target chain...');
           
-          if (!bridgeConfirmed) {
-            console.warn('[REDEEM] Bridge confirmation timeout, but continuing...');
-              }
+          // Wait a bit for the deposit transaction to be mined
+          await new Promise(resolve => setTimeout(resolve, 5000));
           
-          console.log('[REDEEM] Bridge confirmed, proceeding with redemption...');
+          // Check deposits on target chain to verify the bridge deposit succeeded
+          const depositsAfterBridge = await bridge.getDepositBalance(targetChainId, voucher.payerAddress);
+          console.log('[REDEEM] Deposits on target chain after bridge:', ethers.formatUnits(depositsAfterBridge, 6), 'USDC');
+          
+          // Verify we have enough deposits now
+          if (depositsAfterBridge < voucherAmount) {
+            throw new Error(`Bridge completed but insufficient deposits on target chain. Expected: ${ethers.formatUnits(voucherAmount, 6)} USDC, Got: ${ethers.formatUnits(depositsAfterBridge, 6)} USDC. The bridge may have failed or the deposit may not have completed.`);
+          }
+          
+          console.log('[REDEEM] ✅ Deposit verified, proceeding with redemption...');
         }
         
         // Step 4: Redeem on target chain

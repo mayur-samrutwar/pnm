@@ -121,9 +121,10 @@ export class HyperlaneBridge {
       if (balance === 0n) {
         throw new Error(`Hub wallet has no ETH on chain ${sourceChainId}. Need ETH to pay Hyperlane fees. Please fund the hub wallet: ${wallet.address}`);
       }
-      // For testnet, Hyperlane fees are typically very small (~0.0001 ETH)
-      // Use a reasonable fallback that should cover the fee
-      messageFee = ethers.parseEther('0.0001');
+      // For testnet, Hyperlane fees might require a minimum amount
+      // Use a more generous fallback to ensure we cover the protocol fee
+      // Hyperlane testnet typically requires at least 0.001 ETH for protocol fees
+      messageFee = ethers.parseEther('0.001');
       console.warn(`[HyperlaneBridge] Using fallback message fee: ${ethers.formatEther(messageFee)} ETH`);
     }
 
@@ -153,22 +154,50 @@ export class HyperlaneBridge {
       console.log(`[HyperlaneBridge] Quoted transfer fee: ${ethers.formatEther(transferFee)} ETH`);
     } catch (error: any) {
       console.error('[HyperlaneBridge] Failed to quote transfer fee:', error.message);
-      // Check wallet balance
-      const balance = await wallet.provider.getBalance(wallet.address);
-      console.log(`[HyperlaneBridge] Wallet balance: ${ethers.formatEther(balance)} ETH`);
-      if (balance === 0n) {
-        throw new Error(`Hub wallet has no ETH on chain ${sourceChainId}. Need ETH to pay Hyperlane fees. Please fund the hub wallet: ${wallet.address}`);
-      }
-      // Try to estimate a reasonable fee (0.001 ETH as fallback)
+      // For testnet, Warp Route fees might require a minimum amount
+      // Use a more generous fallback to ensure we cover the protocol fee
       transferFee = ethers.parseEther('0.001');
       console.warn(`[HyperlaneBridge] Using fallback transfer fee: ${ethers.formatEther(transferFee)} ETH`);
     }
+    
+    // Verify we have enough balance to cover all fees
+    const balance = await wallet.provider.getBalance(wallet.address);
+    const totalFees = messageFee + transferFee;
+    console.log(`[HyperlaneBridge] Total fees needed: ${ethers.formatEther(totalFees)} ETH, Wallet balance: ${ethers.formatEther(balance)} ETH`);
+    if (balance < totalFees) {
+      throw new Error(`Insufficient ETH balance. Need ${ethers.formatEther(totalFees)} ETH for fees (message: ${ethers.formatEther(messageFee)} ETH, transfer: ${ethers.formatEther(transferFee)} ETH), but only have ${ethers.formatEther(balance)} ETH. Please fund hub wallet: ${wallet.address}`);
+    }
 
-    // First, we need to ensure the wallet has Warp Route USDC tokens
-    // If user deposited native USDC, we need to convert it to Warp Route USDC
-    // For now, assume the hub already has Warp Route USDC or will convert it
+    // First, we need to approve the Warp Route to spend USDC
+    // Get native USDC address on source chain
+    const nativeUSDC = ChainRegistry.getNativeUSDCAddress(sourceChainId);
+    if (!nativeUSDC) {
+      throw new Error(`No native USDC address for chain ${sourceChainId}`);
+    }
+    
+    // Check hub wallet's USDC balance
+    const usdcAbi = ['function balanceOf(address owner) external view returns (uint256)', 'function approve(address spender, uint256 amount) external returns (bool)', 'function allowance(address owner, address spender) external view returns (uint256)'];
+    const usdcContract = new ethers.Contract(nativeUSDC, usdcAbi, wallet);
+    const usdcBalance = await usdcContract.balanceOf(wallet.address);
+    console.log(`[HyperlaneBridge] Hub wallet USDC balance: ${ethers.formatUnits(usdcBalance, 6)} USDC`);
+    
+    if (usdcBalance < amount) {
+      throw new Error(`Insufficient USDC balance. Need ${ethers.formatUnits(amount, 6)} USDC, but only have ${ethers.formatUnits(usdcBalance, 6)} USDC`);
+    }
+    
+    // Check current allowance
+    const currentAllowance = await usdcContract.allowance(wallet.address, warpRouteAddress);
+    console.log(`[HyperlaneBridge] Current Warp Route allowance: ${ethers.formatUnits(currentAllowance, 6)} USDC`);
+    
+    // Approve Warp Route if needed
+    if (currentAllowance < amount) {
+      console.log(`[HyperlaneBridge] Approving Warp Route to spend ${ethers.formatUnits(amount, 6)} USDC...`);
+      const approveTx = await usdcContract.approve(warpRouteAddress, amount);
+      await approveTx.wait();
+      console.log(`[HyperlaneBridge] Approval confirmed: ${approveTx.hash}`);
+    }
 
-    // Transfer USDC
+    // Transfer USDC via Warp Route
     const transferTx = await warpRoute.transferRemote(
       targetDomainId,
       recipientBytes32,
@@ -179,28 +208,50 @@ export class HyperlaneBridge {
 
     console.log(`[HyperlaneBridge] USDC transferred: ${transferTx.hash}`);
 
-    // Step 3: Wait a bit for the message to be processed
-    // In production, we should poll for message delivery
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // Step 3: Wait for USDC to arrive at CrossChainReceiver on target chain
+    // Hyperlane Warp Routes need time for the relayer to process the transfer
+    const targetWallet = this.getWallet(targetChainId);
+    const targetProvider = new ethers.JsonRpcProvider(ChainRegistry.getRpcUrl(targetChainId)!);
+    const targetNativeUSDC = ChainRegistry.getNativeUSDCAddress(targetChainId)!;
+    const targetUsdcAbi = ['function balanceOf(address owner) external view returns (uint256)'];
+    const targetUSDC = new ethers.Contract(targetNativeUSDC, targetUsdcAbi, targetProvider);
+    
+    console.log(`[HyperlaneBridge] Waiting for USDC to arrive at CrossChainReceiver (${receiverAddress})...`);
+    
+    // Poll for USDC arrival (up to 5 minutes)
+    const maxWaitTime = 5 * 60 * 1000; // 5 minutes
+    const pollInterval = 5000; // 5 seconds
+    const startTime = Date.now();
+    let receiverBalance = 0n;
+    
+    while (Date.now() - startTime < maxWaitTime) {
+      receiverBalance = await targetUSDC.balanceOf(receiverAddress);
+      console.log(`[HyperlaneBridge] CrossChainReceiver USDC balance: ${ethers.formatUnits(receiverBalance, 6)} USDC (waiting for ${ethers.formatUnits(amount, 6)} USDC)...`);
+      
+      if (receiverBalance >= amount) {
+        console.log(`[HyperlaneBridge] ✅ USDC arrived at CrossChainReceiver!`);
+        break;
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+    
+    if (receiverBalance < amount) {
+      throw new Error(`USDC did not arrive at CrossChainReceiver within timeout. Expected: ${ethers.formatUnits(amount, 6)} USDC, Current balance: ${ethers.formatUnits(receiverBalance, 6)} USDC`);
+    }
 
     // Step 4: Trigger deposit on target chain
-    // The receiver contract should have received the USDC by now
-    // We can call depositToVaultDirect on the receiver
-    const targetWallet = this.getWallet(targetChainId);
+    // Now that USDC has arrived, we can call depositToVaultDirect
     const receiver = new ethers.Contract(receiverAddress, RECEIVER_ABI, targetWallet);
 
     try {
-      // Wait a bit more for USDC to arrive
-      await new Promise(resolve => setTimeout(resolve, 3000));
-
-      // Call depositToVaultDirect
+      console.log(`[HyperlaneBridge] Depositing ${ethers.formatUnits(amount, 6)} USDC to Vault for user ${userAddress}...`);
       const depositTx = await receiver.depositToVaultDirect(userAddress, amount);
       await depositTx.wait();
-      console.log(`[HyperlaneBridge] Deposited to Vault on target chain: ${depositTx.hash}`);
-    } catch (error) {
-      console.error('[HyperlaneBridge] Failed to deposit to Vault on target chain:', error);
-      // This is not critical - the deposit can be triggered manually later
-      // The USDC is already on the receiver contract
+      console.log(`[HyperlaneBridge] ✅ Deposited to Vault on target chain: ${depositTx.hash}`);
+    } catch (error: any) {
+      console.error('[HyperlaneBridge] Failed to deposit to Vault on target chain:', error.message);
+      throw new Error(`Failed to deposit USDC to Vault: ${error.message}`);
     }
 
     return {
